@@ -1,6 +1,6 @@
 name: filen_dart
-description: Filen.io CLI client in Dart (unoffical) 
-version: 0.0.1
+description: Filen.io CLI client in Dart (unofficial)
+version: 0.0.2
 publish_to: none
 
 environment:
@@ -13,6 +13,8 @@ dependencies:
   pointycastle: ^3.7.3
   hex: ^0.2.0
   path: ^1.8.3
+  convert: ^3.1.1
+  glob: ^2.1.2
 
 dev_dependencies:
   lints: ^2.1.0
