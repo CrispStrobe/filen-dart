@@ -1,0 +1,26 @@
+# Dart / Pub
+.dart_tool/
+.packages
+build/
+.pub/
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Mac OS
+.DS_Store
+
+# Compiled Binaries (if you compile to native exe)
+filen
+filen.exe
+*.app
+
+# Local credentials (just in case you save them locally during dev)
+credentials.json
+.env
+
+# Logs
+*.log
