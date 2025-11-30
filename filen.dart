@@ -1,7 +1,7 @@
 #!/usr/bin/env dart
 
 /// ---------------------------------------------------------------------------
-/// FILEN CLI (v0.0.2)
+/// FILEN CLI (v0.0.3)
 /// ---------------------------------------------------------------------------
 
 import 'dart:async';
@@ -159,6 +159,9 @@ class FilenCLI {
           if (commandArgs.length < 3) _exit('Usage: rename <path> <new_name>');
           await handleRename(commandArgs[1], commandArgs[2]);
           break;
+        case 'verify':
+          await handleVerify(argResults);
+          break;
         case 'list-trash':
           await handleListTrash(argResults);
           break;
@@ -254,27 +257,28 @@ class FilenCLI {
     print('  --webdav-debug             WebDAV debug logging');
     print('');
     print('File Operations:');
-    print('  login                      Login to account');
-    print('  whoami                     Show current user');
-    print('  logout                     Logout and clear credentials');
-    print('  ls [path]                  List folder contents');
-    print('  mkdir <path>               Create folder(s)');
-    print('  up <sources...>            Upload files/folders');
-    print('  dl <uuid>                  Download file by UUID');
-    print('  download-path <path>       Download by path');
-    print('  mv <src> <dest>            Move file/folder');
-    print('  cp <src> <dest>            Copy file/folder');
-    print('  rm <path>                  Move to trash');
-    print('  delete-path <path>         Permanently delete');
-    print('  rename <path> <name>       Rename item');
-    print('  list-trash                 Show trash contents');
-    print('  restore-uuid <uuid>        Restore from trash by UUID');
-    print('  restore-path <name>        Restore from trash by name');
-    print('  resolve <path>             Debug path resolution');
-    print('  search <query>             Server-side search');
-    print('  find <path> <pattern>      Recursive file find');
-    print('  tree [path]                Show folder tree');
-    print('  config                     Show configuration');
+    print('  login                            Login to account');
+    print('  whoami                           Show current user');
+    print('  logout                           Logout and clear credentials');
+    print('  ls [path]                        List folder contents');
+    print('  mkdir <path>                     Create folder(s)');
+    print('  up <sources...>                  Upload files/folders');
+    print('  dl <uuid>                        Download file by UUID');
+    print('  download-path <path>             Download by path');
+    print('  mv <src> <dest>                  Move file/folder');
+    print('  cp <src> <dest>                  Copy file/folder');
+    print('  rm <path>                        Move to trash');
+    print('  delete-path <path>               Permanently delete');
+    print('  rename <path> <name>             Rename item');
+    print('  verify <uuid|path> <local file>  Verify upload (SHA-512)');
+    print('  list-trash                       Show trash contents');
+    print('  restore-uuid <uuid>              Restore from trash by UUID');
+    print('  restore-path <name>              Restore from trash by name');
+    print('  resolve <path>                   Debug path resolution');
+    print('  search <query>                   Server-side search');
+    print('  find <path> <pattern>            Recursive file find');
+    print('  tree [path]                      Show folder tree');
+    print('  config                           Show configuration');
     print('');
     print('WebDAV Server:');
     print('  mount                      Start WebDAV (foreground)');
@@ -372,7 +376,8 @@ class FilenCLI {
   Future<void> handleList(ArgResults flags, List<String> pathArgs) async {
     await _prepareClient();
     final path = pathArgs.isNotEmpty ? pathArgs.join(' ') : '/';
-    final bool showFullUUIDs = flags['uuids'];
+    final bool showFullUUIDs =
+        flags['uuids'] || flags['detailed']; // Show full UUIDs if --uuids OR -d
     final bool detailed = flags['detailed'];
 
     final res = await client.resolvePath(path);
@@ -472,20 +477,94 @@ class FilenCLI {
     }
   }
 
+  Future<void> handleVerify(ArgResults argResults) async {
+  final args = argResults.rest.sublist(1);
+  if (args.length < 2) {
+    stderr.writeln('❌ Usage: dart filen.dart verify <file-uuid-or-path> <local-file>');
+    stderr.writeln('   Examples:');
+    stderr.writeln('     dart filen.dart verify abc123-def456-... localfile.pdf');
+    stderr.writeln('     dart filen.dart verify /Documents/file.pdf localfile.pdf');
+    exit(1);
+  }
+
+  try {
+    final creds = await config.readCredentials();
+    if (creds == null) {
+      stderr.writeln('❌ Not logged in. Use "dart filen.dart login" first.');
+      exit(1);
+    }
+    client.setAuth(creds);
+
+    final input = args[0];
+    final localPath = args[1];
+    final localFile = File(localPath);
+    
+    if (!await localFile.exists()) {
+      stderr.writeln('❌ Local file not found: $localPath');
+      exit(1);
+    }
+
+    // Check if input looks like a UUID
+    final isUuid = RegExp(
+      r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$',
+      caseSensitive: false
+    ).hasMatch(input);
+
+    String fileUuid;
+    String displayName;
+
+    if (isUuid) {
+      // Direct UUID verification
+      fileUuid = input;
+      displayName = p.basename(localPath);
+      
+      print('🔍 Verifying upload by UUID');
+      print('   Remote UUID: $fileUuid');
+      print('   Local file: $localPath');
+      print('');
+    } else {
+      // Path-based verification - resolve first
+      print('🔍 Resolving remote path: $input');
+      
+      final resolved = await client.resolvePath(input);
+      
+      if (resolved['type'] != 'file') {
+        stderr.writeln('❌ Error: "$input" is not a file (it\'s a ${resolved['type']})');
+        exit(1);
+      }
+      
+      fileUuid = resolved['uuid'];
+      displayName = p.basename(input);
+      
+      print('   ✅ Resolved to UUID: $fileUuid');
+      print('   Local file: $localPath');
+      print('');
+    }
+    
+    final match = await client.verifyUploadMetadata(fileUuid, localFile);
+    
+    exit(match ? 0 : 1);
+  } catch (e) {
+    stderr.writeln('❌ Verification failed: $e');
+    if (debugMode) {
+      stderr.writeln(e);
+    }
+    exit(1);
+  }
+}
+
   Future<void> handleUpload(ArgResults argResults) async {
     final sources = argResults.rest.sublist(1);
     if (sources.isEmpty) _exit('No source files specified');
 
     await _prepareClient();
 
-    // Extract targetPath correctly - it should be the LAST argument
     String targetPath = '/';
     List<String> actualSources = sources;
 
     if (argResults.wasParsed('target')) {
       targetPath = argResults['target'] as String;
     } else if (sources.length > 1) {
-      // Check if last argument looks like a path (not a file pattern)
       final lastArg = sources.last;
       if (lastArg.startsWith('/') || !lastArg.contains('*')) {
         targetPath = lastArg;
@@ -501,7 +580,7 @@ class FilenCLI {
 
     final batchId = config.generateBatchId('upload', actualSources, targetPath);
     print("🔄 Batch ID: $batchId");
-    print("🎯 Target: $targetPath"); // Add this for visibility
+    print("🎯 Target: $targetPath");
     var batchState = await config.loadBatchState(batchId);
 
     try {
@@ -1578,6 +1657,27 @@ class FilenCLI {
   }
 }
 
+/// Exception for chunk upload failures
+class ChunkUploadException implements Exception {
+  final String message;
+  final String fileUuid; // Store file UUID
+  final String uploadKey;
+  final int lastSuccessfulChunk;
+  final Object? originalError;
+
+  ChunkUploadException(
+    this.message, {
+    required this.fileUuid, // Required parameter
+    required this.uploadKey,
+    required this.lastSuccessfulChunk,
+    this.originalError,
+  });
+
+  @override
+  String toString() => 'ChunkUploadException: $message '
+      '(uuid: $fileUuid, uploadKey: $uploadKey, lastChunk: $lastSuccessfulChunk)';
+}
+
 // ============================================================================
 // API CLIENT (Enhanced)
 // ============================================================================
@@ -1601,41 +1701,14 @@ class FilenClient {
 
   FilenClient({required this.config});
 
-  void setAuth(Map<String, dynamic> c) {
-    apiKey = c['apiKey'] ?? '';
-    baseFolderUUID = c['baseFolderUUID'] ?? '';
-    masterKeys = (c['masterKeys'] ?? '')
-        .toString()
-        .split('|')
-        .where((k) => k.isNotEmpty)
-        .toList();
-    email = c['email'] ?? '';
-  }
-
-  void _log(String msg) {
-    if (debugMode) print('🔍 [DEBUG] $msg');
-  }
-
-  void logWebDAV(String message) {
-    if (debugMode) {
-      final timestamp = DateTime.now().toIso8601String();
-      print('[$timestamp] WebDAV: $message');
-    }
-  }
-
-  // --- Token Refresh (Filen doesn't have this, but adding stub for consistency) ---
-  Future<void> refreshToken() async {
-    // Filen uses long-lived API keys, no refresh needed
-    _log('Token refresh not needed for Filen');
-  }
-
-  // --- Request wrapper with retry logic ---
+  // Centralized request method with retry logic
   Future<http.Response> _makeRequest(
     String method,
     Uri url, {
     Map<String, String>? headers,
     dynamic body,
     bool useAuth = true,
+    bool isAuthRetry = false,
     int maxRetries = 3,
     int retryCount = 0,
   }) async {
@@ -1676,30 +1749,44 @@ class FilenClient {
         _log(
             'Retrying in ${delay.inSeconds}s... (${retryCount + 1}/$maxRetries)');
         await Future.delayed(delay);
-        return _makeRequest(method, url,
-            headers: headers,
-            body: body,
-            useAuth: useAuth,
-            maxRetries: maxRetries,
-            retryCount: retryCount + 1);
+        return _makeRequest(
+          method,
+          url,
+          headers: headers,
+          body: body,
+          useAuth: useAuth,
+          isAuthRetry: isAuthRetry,
+          maxRetries: maxRetries,
+          retryCount: retryCount + 1,
+        );
       }
       throw Exception('Network request failed after $maxRetries attempts: $e');
     }
 
-    // Handle 5xx errors
+    // Handle 5xx errors with retry
     if (response.statusCode >= 500 && response.statusCode < 600) {
       if (retryCount < maxRetries) {
         final delay = Duration(seconds: 1 << retryCount);
         _log(
             'Server error ${response.statusCode}. Retrying in ${delay.inSeconds}s...');
         await Future.delayed(delay);
-        return _makeRequest(method, url,
-            headers: headers,
-            body: body,
-            useAuth: useAuth,
-            maxRetries: maxRetries,
-            retryCount: retryCount + 1);
+        return _makeRequest(
+          method,
+          url,
+          headers: headers,
+          body: body,
+          useAuth: useAuth,
+          isAuthRetry: isAuthRetry,
+          maxRetries: maxRetries,
+          retryCount: retryCount + 1,
+        );
       }
+    }
+
+    // Handle 401 (for future token refresh support)
+    if (response.statusCode == 401 && useAuth && !isAuthRetry) {
+      _log('Auth error (401). API key may be invalid.');
+      // Filen doesn't have refresh tokens, but structure is here for consistency
     }
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -1710,6 +1797,310 @@ class FilenClient {
     return response;
   }
 
+  /// Hash a file using SHA-512
+  Future<String> hashFile(File file) async {
+    final digestSink = DigestSink();
+    final byteSink = crypto.sha512.startChunkedConversion(digestSink);
+
+    final raf = await file.open();
+    const chunkSize = 1048576; // 1MB chunks
+
+    try {
+      while (true) {
+        final bytes = await raf.read(chunkSize);
+        if (bytes.isEmpty) break;
+        byteSink.add(bytes);
+      }
+
+      byteSink.close();
+      return HEX.encode(digestSink.value?.bytes ?? []).toLowerCase();
+    } finally {
+      await raf.close();
+    }
+  }
+
+  /// Verify uploaded file using metadata hash (no download needed)
+  Future<bool> verifyUploadMetadata(String fileUuid, File originalFile) async {
+    _log('Verifying upload using metadata check...');
+
+    // Hash the original file
+    print('   📊 Hashing local file...');
+    final localHash = await hashFile(originalFile);
+    _log('   Local SHA-512: $localHash');
+
+    // Get file metadata from server
+    print('   📋 Fetching metadata from server...');
+    final metadata = await getFileMetadata(fileUuid);
+    final metaStr = await _tryDecrypt(metadata['metadata']);
+    final meta = json.decode(metaStr);
+
+    final serverHash = meta['hash'] as String?;
+
+    if (serverHash == null || serverHash.isEmpty) {
+      print('   ⚠️  No hash in metadata (empty file?)');
+      return await originalFile.length() == 0;
+    }
+
+    _log('   Server SHA-512: $serverHash');
+
+    final match = localHash == serverHash;
+
+    if (match) {
+      print('   ✅ Verification successful - hashes match!');
+    } else {
+      print('   ❌ Verification failed - hashes differ!');
+      print('      Local:  $localHash');
+      print('      Server: $serverHash');
+    }
+
+    return match;
+  }
+
+  Future<Map<String, String>> uploadFileChunked(
+    File file,
+    String parent, {
+    String? fileUuid,
+    String? creationTime,
+    String? modificationTime,
+    String? resumeUploadKey,
+    int resumeFromChunk = 0,
+    Function(int current, int total, int bytesUploaded, int totalBytes)?
+        onProgress,
+    Function(String uuid, String uploadKey)? onUploadStart,
+  }) async {
+    final name = p.basename(file.path);
+    final size = await file.length();
+    final uuid = fileUuid ?? _uuid();
+    final mk = masterKeys.last;
+
+    final fileKeyStr = _randomString(32);
+    final fileKeyBytes = Uint8List.fromList(utf8.encode(fileKeyStr));
+
+    // Get modification time
+    var lastMod = modificationTime;
+    if (lastMod == null && creationTime == null) {
+      try {
+        final stat = await file.stat();
+        lastMod = stat.modified.millisecondsSinceEpoch.toString();
+      } catch (_) {}
+    }
+
+    // Handle empty files
+    if (size == 0) {
+      _log('Uploading empty file via /v3/upload/empty');
+
+      final metaJson = json.encode({
+        'name': name,
+        'size': size,
+        'mime': 'application/octet-stream',
+        'key': fileKeyStr,
+        'hash': '',
+        'lastModified': lastMod != null
+            ? int.tryParse(lastMod) ?? DateTime.now().millisecondsSinceEpoch
+            : DateTime.now().millisecondsSinceEpoch,
+      });
+
+      final nameEncrypted = await _encryptMetadata002(name, fileKeyStr);
+      final sizeEncrypted =
+          await _encryptMetadata002(size.toString(), fileKeyStr);
+      final mimeEncrypted =
+          await _encryptMetadata002('application/octet-stream', fileKeyStr);
+      final metadataEncrypted = await _encryptMetadata002(metaJson, mk);
+      final nameHashed = await _hashFileName(name);
+
+      await _post('/v3/upload/empty', {
+        'uuid': uuid,
+        'name': nameEncrypted,
+        'nameHashed': nameHashed,
+        'size': sizeEncrypted,
+        'parent': parent,
+        'mime': mimeEncrypted,
+        'metadata': metadataEncrypted,
+        'version': 2,
+      });
+
+      _invalidateCache(parent);
+
+      if (onProgress != null) {
+        onProgress(1, 1, 0, 0);
+      }
+
+      return {
+        'uuid': uuid,
+        'hash': '', // Empty files have no hash
+        'size': '0',
+      };
+    }
+
+    // Regular chunked upload
+    final uploadKey = resumeUploadKey ?? _randomString(32);
+
+    // Notify caller of UUID and uploadKey BEFORE starting upload
+    if (onUploadStart != null && resumeFromChunk == 0) {
+      onUploadStart(uuid, uploadKey);
+    }
+
+    final rm = _randomString(32);
+    const chunkSz = 1048576; // 1MB chunks
+    final totalChunks = (size / chunkSz).ceil();
+
+    if (resumeFromChunk > 0) {
+      _log('RESUMING upload:');
+      _log('  UUID: $uuid');
+      _log('  Upload Key: ${uploadKey.substring(0, 8)}...');
+      _log('  Starting from chunk: $resumeFromChunk');
+      _log('  Total chunks: $totalChunks');
+    } else {
+      _log('STARTING new upload:');
+      _log('  UUID: $uuid');
+      _log('  Upload Key: ${uploadKey.substring(0, 8)}...');
+      _log('  Total chunks: $totalChunks');
+    }
+
+    final ingest = 'https://ingest.filen.io';
+    final raf = await file.open();
+    int offset = resumeFromChunk * chunkSz;
+    int index = resumeFromChunk;
+
+    final digestSink = DigestSink();
+    final byteSink = crypto.sha512.startChunkedConversion(digestSink);
+
+    try {
+      // If resuming, re-hash previous chunks for final hash
+      if (resumeFromChunk > 0) {
+        _log('Re-hashing previous ${resumeFromChunk} chunks...');
+        await raf.setPosition(0);
+        for (var i = 0; i < resumeFromChunk; i++) {
+          final len = min(chunkSz, size - (i * chunkSz));
+          final bytes = await raf.read(len);
+          byteSink.add(bytes);
+        }
+        await raf.setPosition(offset);
+        _log('Re-hashing complete, resuming upload from byte $offset');
+      }
+
+      while (offset < size) {
+        final len = min(chunkSz, size - offset);
+        final bytes = await raf.read(len);
+        byteSink.add(bytes);
+        final encChunk = await _encryptData(bytes, fileKeyBytes);
+
+        final chunkHash = crypto.sha512.convert(encChunk);
+        final hashHex = HEX.encode(chunkHash.bytes).toLowerCase();
+
+        final url = Uri.parse(
+            '$ingest/v3/upload?uuid=$uuid&index=$index&parent=$parent&uploadKey=$uploadKey&hash=$hashHex');
+
+        if (onProgress != null) {
+          onProgress(index + 1, totalChunks, offset + len, size);
+        } else {
+          final progress = ((index + 1) / totalChunks * 100).toStringAsFixed(1);
+          stdout.write(
+              '     Uploading... ${index + 1}/$totalChunks chunks ($progress%)  \r');
+        }
+
+        try {
+          final r = await http.post(url, body: encChunk, headers: {
+            'Authorization': 'Bearer $apiKey'
+          }).timeout(Duration(seconds: 30));
+
+          if (r.statusCode != 200) {
+            throw Exception('Chunk upload failed: ${r.statusCode} - ${r.body}');
+          }
+        } catch (e) {
+          _log('Chunk $index failed: $e');
+          throw ChunkUploadException(
+            'Chunk $index upload failed',
+            fileUuid: uuid,
+            uploadKey: uploadKey,
+            lastSuccessfulChunk: index - 1,
+            originalError: e,
+          );
+        }
+
+        offset += len;
+        index++;
+      }
+
+      print(''); // Clear progress line
+
+      byteSink.close();
+
+      final totalHash = HEX.encode(digestSink.value?.bytes ?? []).toLowerCase();
+
+      final metaJsonWithHash = json.encode({
+        'name': name,
+        'size': size,
+        'mime': 'application/octet-stream',
+        'key': fileKeyStr,
+        'hash': totalHash,
+        'lastModified': lastMod != null
+            ? int.tryParse(lastMod) ?? DateTime.now().millisecondsSinceEpoch
+            : DateTime.now().millisecondsSinceEpoch,
+      });
+
+      final nameEncrypted = await _encryptMetadata002(name, fileKeyStr);
+      final sizeEncrypted =
+          await _encryptMetadata002(size.toString(), fileKeyStr);
+      final mimeEncrypted =
+          await _encryptMetadata002('application/octet-stream', fileKeyStr);
+      final metadataEncryptedWithHash =
+          await _encryptMetadata002(metaJsonWithHash, mk);
+      final nameHashed = await _hashFileName(name);
+
+      await _post('/v3/upload/done', {
+        'uuid': uuid,
+        'name': nameEncrypted,
+        'nameHashed': nameHashed,
+        'size': sizeEncrypted,
+        'chunks': index,
+        'mime': mimeEncrypted,
+        'rm': rm,
+        'metadata': metadataEncryptedWithHash,
+        'version': 2,
+        'uploadKey': uploadKey,
+      });
+
+      _invalidateCache(parent);
+
+      return {
+        'uuid': uuid,
+        'hash': totalHash,
+        'size': size.toString(),
+      };
+    } finally {
+      await raf.close();
+    }
+  }
+
+  void setAuth(Map<String, dynamic> c) {
+    apiKey = c['apiKey'] ?? '';
+    baseFolderUUID = c['baseFolderUUID'] ?? '';
+    masterKeys = (c['masterKeys'] ?? '')
+        .toString()
+        .split('|')
+        .where((k) => k.isNotEmpty)
+        .toList();
+    email = c['email'] ?? '';
+  }
+
+  void _log(String msg) {
+    if (debugMode) print('🔍 [DEBUG] $msg');
+  }
+
+  void logWebDAV(String message) {
+    if (debugMode) {
+      final timestamp = DateTime.now().toIso8601String();
+      print('[$timestamp] WebDAV: $message');
+    }
+  }
+
+  // --- Token Refresh (Filen doesn't have this, but adding stub for consistency) ---
+  Future<void> refreshToken() async {
+    // Filen uses long-lived API keys, no refresh needed
+    _log('Token refresh not needed for Filen');
+  }
+
   // --- Cache management ---
   void _invalidateCache(String folderUuid) {
     _folderCache.remove(folderUuid);
@@ -1718,9 +2109,24 @@ class FilenClient {
   }
 
   Future<void> _clearParentCache(String itemUuid, String itemType) async {
-    // Filen metadata includes parent, so we'd need to fetch it
-    // For now, just invalidate the item's direct parent if we have it
-    _log('Parent cache clear requested for $itemUuid');
+    try {
+      String? parentUuid;
+
+      if (itemType == 'file') {
+        final metadata = await getFileMetadata(itemUuid);
+        parentUuid = metadata['data']?['parent'] ?? metadata['parent'];
+      } else if (itemType == 'folder') {
+        final metadata = await getFolderMetadata(itemUuid);
+        parentUuid = metadata['data']?['parent'] ?? metadata['parent'];
+      }
+
+      if (parentUuid != null) {
+        _invalidateCache(parentUuid);
+        _log('Cleared parent cache for $parentUuid');
+      }
+    } catch (e) {
+      _log('Could not clear parent cache for $itemUuid: $e');
+    }
   }
 
   // --- AUTH & SETUP ---
@@ -1998,42 +2404,37 @@ class FilenClient {
   }
 
   Future<void> moveItem(String uuid, String destUuid, String type) async {
+    await _clearParentCache(uuid, type);
     final endpoint = type == 'folder' ? '/v3/dir/move' : '/v3/file/move';
     await _post(endpoint, {'uuid': uuid, 'to': destUuid});
     _invalidateCache(destUuid);
-    await _clearParentCache(uuid, type);
   }
 
   Future<void> trashItem(String uuid, String type) async {
-    // API Doc: POST /file/trash or /dir/trash
-    final endpoint = type == 'folder' ? '/v3/dir/trash' : '/v3/file/trash';
-
-    await _post(endpoint, {'uuid': uuid});
     await _clearParentCache(uuid, type);
+    final endpoint = type == 'folder' ? '/v3/dir/trash' : '/v3/file/trash';
+    await _post(endpoint, {'uuid': uuid});
   }
 
   Future<void> restoreItem(String uuid, String type) async {
-    // API Doc: POST /file/restore or /dir/restore
     final endpoint = type == 'folder' ? '/v3/dir/restore' : '/v3/file/restore';
-
     await _post(endpoint, {'uuid': uuid});
-
-    // Invalidate root or look up parent if possible, but simplest is to just proceed.
-    // The API puts it back in its original parent.
+    // Invalidate root cache since we don't know where it was restored to
+    if (baseFolderUUID.isNotEmpty) {
+      _invalidateCache(baseFolderUUID);
+    }
   }
 
   Future<void> deletePermanently(String uuid, String type) async {
-    // API Doc: POST /file/delete/permanent or /dir/delete/permanent
+    await _clearParentCache(uuid, type);
     final endpoint = type == 'folder'
         ? '/v3/dir/delete/permanent'
         : '/v3/file/delete/permanent';
-
     await _post(endpoint, {'uuid': uuid});
-    // We cannot clear parent cache easily as the item is in trash,
-    // but we should invalidate the trash list if we were caching it.
   }
 
   Future<void> renameItem(String uuid, String newName, String type) async {
+    await _clearParentCache(uuid, type); // ADD THIS
     final mk = masterKeys.last;
     final nameHashed = await _hashFileName(newName);
 
@@ -2043,14 +2444,18 @@ class FilenClient {
       await _post('/v3/dir/rename',
           {'uuid': uuid, 'name': encName, 'nameHashed': nameHashed});
     } else {
-      // For files, need to re-encrypt metadata
       final metaRaw = await getFileMetadata(uuid);
-      metaRaw['name'] = newName;
-      final metaJson = json.encode(metaRaw);
-      final fileKey = metaRaw['key'];
+      final metadata = metaRaw['data'] ?? metaRaw;
 
+      // Decrypt existing metadata
+      final metaStr = await _tryDecrypt(metadata['metadata']);
+      final metaJson = json.decode(metaStr);
+      metaJson['name'] = newName; // Update name
+
+      final fileKey = metaJson['key'];
       final nameEncrypted = await _encryptMetadata002(newName, fileKey);
-      final metadataEncrypted = await _encryptMetadata002(metaJson, mk);
+      final metadataEncrypted =
+          await _encryptMetadata002(json.encode(metaJson), mk);
 
       await _post('/v3/file/rename', {
         'uuid': uuid,
@@ -2059,14 +2464,22 @@ class FilenClient {
         'nameHashed': nameHashed
       });
     }
+  }
 
-    await _clearParentCache(uuid, type);
+  Future<Map<String, dynamic>> getFileMetadata_old(String uuid) async {
+    final info = await _post('/v3/file', {'uuid': uuid});
+    final metaStr = await _tryDecrypt(info['data']['metadata']);
+    return json.decode(metaStr);
   }
 
   Future<Map<String, dynamic>> getFileMetadata(String uuid) async {
     final info = await _post('/v3/file', {'uuid': uuid});
-    final metaStr = await _tryDecrypt(info['data']['metadata']);
-    return json.decode(metaStr);
+    return info['data'] ?? info;
+  }
+
+  Future<Map<String, dynamic>> getFolderMetadata(String uuid) async {
+    final info = await _post('/v3/dir', {'uuid': uuid});
+    return info['data'] ?? info;
   }
 
   // --- Upload/Download with batching ---
@@ -2228,6 +2641,14 @@ class FilenClient {
     _invalidateCache(parent);
   }
 
+  // ============================================================================
+  // 7. UPDATE: Upload with chunk-level resume
+  // ============================================================================
+
+  // ============================================================================
+// FIXED: upload - Better resume detection and logging
+// ============================================================================
+
   Future<void> upload(
     List<String> sources,
     String targetPath, {
@@ -2239,6 +2660,9 @@ class FilenClient {
     required String batchId,
     Map<String, dynamic>? initialBatchState,
     required Future<void> Function(Map<String, dynamic>) saveStateCallback,
+    Function(String filename, int current, int total, int bytesUploaded,
+            int totalBytes)?
+        onFileProgress,
   }) async {
     _log("Upload target path: $targetPath");
 
@@ -2249,11 +2673,19 @@ class FilenClient {
       print("🔄 Resuming batch...");
       batchState = initialBatchState;
       tasks = batchState['tasks'] as List<dynamic>;
+
+      // DEBUG: Show what we're resuming
+      _log("Batch state loaded:");
+      _log("  Total tasks: ${tasks.length}");
+      for (var i = 0; i < tasks.length; i++) {
+        final task = tasks[i];
+        _log(
+            "  Task $i: status=${task['status']}, lastChunk=${task['lastChunk']}, uuid=${task['fileUuid']?.toString().substring(0, min(8, task['fileUuid']?.toString().length ?? 0))}...");
+      }
     } else {
       print("🔍 Building task list...");
       tasks = [];
 
-      // FIX: Resolve/create target folder BEFORE processing sources
       final targetFolderInfo = await _resolveOrCreateFolder(targetPath);
       final targetFolderUuid = targetFolderInfo['uuid'];
       _log("Target folder UUID: $targetFolderUuid");
@@ -2282,13 +2714,10 @@ class FilenClient {
               } catch (_) {}
             }
 
-            // FIX: Build correct remote base path
             String remoteBase;
             if (hasTrailingSlash) {
-              // Upload contents INTO target
               remoteBase = targetPath;
             } else {
-              // Upload directory itself INTO target
               final dirName = p.basename(localDir.path);
               remoteBase = p.join(targetPath, dirName).replaceAll('\\', '/');
             }
@@ -2314,13 +2743,15 @@ class FilenClient {
                     'localPath': fileEntity.path,
                     'remotePath': remoteFilePath,
                     'status': 'pending',
+                    'fileUuid': null,
+                    'uploadKey': null,
+                    'lastChunk': -1,
                   });
                 }
               }
             }
           } else if (await FileSystemEntity.isFile(entity.path)) {
             final localFile = File(entity.path);
-            // FIX: Files go INTO targetPath
             final remoteFilePath = p
                 .join(targetPath, p.basename(localFile.path))
                 .replaceAll('\\', '/');
@@ -2331,6 +2762,9 @@ class FilenClient {
                 'localPath': localFile.path,
                 'remotePath': remoteFilePath,
                 'status': 'pending',
+                'fileUuid': null,
+                'uploadKey': null,
+                'lastChunk': -1,
               });
             }
           }
@@ -2356,6 +2790,20 @@ class FilenClient {
       final localPath = task['localPath'] as String;
       final remotePath = task['remotePath'] as String;
       final status = task['status'] as String;
+      final fileUuid = task['fileUuid'] as String?;
+      final uploadKey = task['uploadKey'] as String?;
+      final lastChunk = task['lastChunk'] as int? ?? -1;
+
+      // DEBUG: Show task details
+      _log("Processing task $i:");
+      _log("  Local: $localPath");
+      _log("  Remote: $remotePath");
+      _log("  Status: $status");
+      _log(
+          "  FileUUID: ${fileUuid?.substring(0, min(8, fileUuid.length)) ?? 'null'}");
+      _log(
+          "  UploadKey: ${uploadKey?.substring(0, min(8, uploadKey?.length ?? 0)) ?? 'null'}");
+      _log("  LastChunk: $lastChunk");
 
       if (status == 'completed') {
         completedPreviously++;
@@ -2390,23 +2838,36 @@ class FilenClient {
         continue;
       }
 
-      // Check conflict
-      final exists =
-          await checkFileExists(parentFolderInfo['uuid'], remoteFileName);
-      if (exists) {
-        if (onConflict == 'skip') {
-          print("⏭️ Skipping: $remoteFileName (exists)");
-          skippedCount++;
-          task['status'] = 'skipped_conflict';
-          await saveStateCallback(batchState);
-          continue;
+      // Check conflict (only for new uploads, not resumes)
+      if (fileUuid == null) {
+        final exists =
+            await checkFileExists(parentFolderInfo['uuid'], remoteFileName);
+        if (exists) {
+          if (onConflict == 'skip') {
+            print("⏭️ Skipping: $remoteFileName (exists)");
+            skippedCount++;
+            task['status'] = 'skipped_conflict';
+            await saveStateCallback(batchState);
+            continue;
+          }
         }
       }
 
       try {
-        // ADD: Show which file we're uploading with size
         final fileSize = await localFile.length();
-        print("📤 Uploading: $remoteFileName (${formatSize(fileSize)})");
+
+        // Better resume detection
+        final isResuming = (status == 'interrupted' || status == 'uploading') &&
+            lastChunk >= 0;
+
+        if (isResuming) {
+          print(
+              "📤 Resuming: $remoteFileName from chunk ${lastChunk + 1} (${formatSize(fileSize)})");
+          _log("  Will resume with UUID: ${fileUuid?.substring(0, 8)}");
+          _log("  Will resume with UploadKey: ${uploadKey?.substring(0, 8)}");
+        } else {
+          print("📤 Uploading: $remoteFileName (${formatSize(fileSize)})");
+        }
 
         String? creationTime;
         String? modificationTime;
@@ -2419,17 +2880,87 @@ class FilenClient {
           } catch (_) {}
         }
 
-        await uploadFile(
+        // Mark as uploading before starting
+        task['status'] = 'uploading';
+        await saveStateCallback(batchState);
+
+        // Track last save time to avoid saving too frequently
+        DateTime lastSaveTime = DateTime.now();
+        int lastSavedChunk = lastChunk;
+
+        final result = await uploadFileChunked(
           localFile,
           parentFolderInfo['uuid'],
+          fileUuid: fileUuid,
           creationTime: creationTime,
           modificationTime: modificationTime,
+          resumeUploadKey: uploadKey,
+          resumeFromChunk: isResuming ? (lastChunk + 1) : 0,
+          onUploadStart: (uuid, key) {
+            if (debugMode) {
+              _log(
+                  "Upload started, saving initial state: uuid=${uuid.substring(0, 8)}, key=${key.substring(0, 8)}");
+            }
+            task['fileUuid'] = uuid;
+            task['uploadKey'] = key;
+            task['lastChunk'] = -1;
+            saveStateCallback(batchState);
+          },
+          onProgress: onFileProgress == null
+              ? null
+              : (current, total, bytesUploaded, totalBytes) {
+                  task['lastChunk'] = current - 1;
+
+                  final now = DateTime.now();
+                  final shouldSave = (current - lastSavedChunk >= 10) ||
+                      (now.difference(lastSaveTime).inSeconds >= 5);
+
+                  if (shouldSave) {
+                    if (debugMode) {
+                      _log("Saving progress: chunk ${current - 1}");
+                    }
+                    saveStateCallback(batchState).then((_) {
+                      lastSaveTime = DateTime.now();
+                      lastSavedChunk = current - 1;
+                    });
+                  }
+
+                  onFileProgress(remoteFileName, current, total, bytesUploaded,
+                      totalBytes);
+                },
         );
+
+// Show hash after upload
+        print("   ✅ Upload complete");
+        print("   📊 SHA-512: ${result['hash']?.substring(0, 64)}...");
+        if (debugMode) {
+          print("   🆔 UUID: ${result['uuid']}");
+        }
 
         successCount++;
         task['status'] = 'completed';
-      } catch (e) {
-        print("❌ Upload error: $e");
+        task['fileUuid'] = null;
+        task['uploadKey'] = null;
+        task['lastChunk'] = -1;
+      } on ChunkUploadException catch (e) {
+        print("\n⚠️ Upload interrupted: ${e.message}");
+        task['fileUuid'] = e.fileUuid;
+        task['uploadKey'] = e.uploadKey;
+        task['lastChunk'] = e.lastSuccessfulChunk;
+        task['status'] = 'interrupted';
+        errorCount++;
+        await saveStateCallback(batchState);
+        print("💾 Progress saved:");
+        print("   UUID: ${e.fileUuid.substring(0, 16)}...");
+        print("   Upload Key: ${e.uploadKey.substring(0, 16)}...");
+        print("   Last successful chunk: ${e.lastSuccessfulChunk}");
+        print("   Run again to resume from chunk ${e.lastSuccessfulChunk + 1}");
+      } catch (e, stack) {
+        print("\n❌ Upload error: $e");
+        if (debugMode) {
+          print("Stack trace:");
+          print(stack);
+        }
         errorCount++;
         task['status'] = 'error_upload';
       }
@@ -2466,8 +2997,61 @@ class FilenClient {
     }
   }
 
-  Future<Map<String, dynamic>> downloadFile(String uuid,
-      {String? savePath}) async {
+  /// Download file with range support
+  Future<Uint8List> downloadFileRange(
+    String uuid, {
+    int? rangeStart,
+    int? rangeEnd,
+  }) async {
+    _log('Downloading file range: $uuid ($rangeStart-$rangeEnd)');
+
+    final info = await _post('/v3/file', {'uuid': uuid});
+    final d = info['data'];
+    final metaStr = await _tryDecrypt(d['metadata']);
+    final meta = json.decode(metaStr);
+    final keyBytes = _decodeUniversalKey(meta['key']);
+    final chunks = int.parse(d['chunks'].toString());
+    final host = 'https://egest.filen.io';
+    final fileSize = meta['size'] ?? 0;
+
+    // Calculate which chunks we need
+    const chunkSize = 1048576;
+    final startChunk = rangeStart != null ? rangeStart ~/ chunkSize : 0;
+    final endChunk = rangeEnd != null ? rangeEnd ~/ chunkSize : chunks - 1;
+
+    final buffer = BytesBuilder();
+
+    for (var i = startChunk; i <= endChunk && i < chunks; i++) {
+      final r = await http
+          .get(Uri.parse('$host/${d['region']}/${d['bucket']}/$uuid/$i'));
+      if (r.statusCode != 200) throw Exception('Chunk download failed');
+
+      final decrypted = await _decryptData(r.bodyBytes, keyBytes);
+
+      // Handle partial chunk at start
+      if (i == startChunk && rangeStart != null) {
+        final offset = rangeStart % chunkSize;
+        buffer.add(decrypted.sublist(offset));
+      }
+      // Handle partial chunk at end
+      else if (i == endChunk && rangeEnd != null) {
+        final endOffset = rangeEnd % chunkSize + 1;
+        buffer.add(decrypted.sublist(0, endOffset));
+      }
+      // Full chunk
+      else {
+        buffer.add(decrypted);
+      }
+    }
+
+    return buffer.toBytes();
+  }
+
+  Future<Map<String, dynamic>> downloadFile(
+    String uuid, {
+    String? savePath,
+    Function(int bytesDownloaded, int totalBytes)? onProgress,
+  }) async {
     _log('Downloading file: $uuid');
 
     final info = await _post('/v3/file', {'uuid': uuid});
@@ -2482,17 +3066,30 @@ class FilenClient {
     final fileSize = meta['size'] ?? 0;
     final modificationTime = meta['lastModified'];
 
-    print('   📄 File: $filename (${formatSize(fileSize)})');
+    if (onProgress == null) {
+      print('   📄 File: $filename (${formatSize(fileSize)})');
+    }
 
     final targetPath = savePath ?? filename;
     final sink = File(targetPath).openWrite();
+
+    int bytesDownloaded = 0;
 
     for (var i = 0; i < chunks; i++) {
       final r = await http
           .get(Uri.parse('$host/${d['region']}/${d['bucket']}/$uuid/$i'));
       if (r.statusCode != 200) throw Exception('Chunk fail');
-      sink.add(await _decryptData(r.bodyBytes, keyBytes));
+
+      final decrypted = await _decryptData(r.bodyBytes, keyBytes);
+      sink.add(decrypted);
+
+      bytesDownloaded += decrypted.length;
+
+      if (onProgress != null) {
+        onProgress(bytesDownloaded, fileSize);
+      }
     }
+
     await sink.close();
 
     return {
@@ -2513,6 +3110,8 @@ class FilenClient {
     required String batchId,
     Map<String, dynamic>? initialBatchState,
     required Future<void> Function(Map<String, dynamic>) saveStateCallback,
+    Function(String filename, int bytesDownloaded, int totalBytes)?
+        onFileProgress,
   }) async {
     final itemInfo = await resolvePath(remotePath);
 
@@ -2538,13 +3137,11 @@ class FilenClient {
 
       final localFile = File(localPath);
 
-      // Handle conflict
       if (await localFile.exists()) {
         if (onConflict == 'skip') {
           print('⏭️  Skipping: $localPath (exists)');
           return;
         } else if (onConflict == 'newer') {
-          // Get remote modification time
           final metadata = itemInfo['metadata'];
           final remoteModTime =
               metadata?['lastModified'] ?? metadata?['timestamp'];
@@ -2571,11 +3168,16 @@ class FilenClient {
             return;
           }
         }
-        // onConflict == 'overwrite' - just proceed
       }
 
       print('📥 Downloading: $filename');
-      final result = await downloadFile(itemInfo['uuid'], savePath: localPath);
+      final result = await downloadFile(
+        itemInfo['uuid'],
+        savePath: localPath,
+        onProgress: onFileProgress != null
+            ? (bytes, total) => onFileProgress(filename, bytes, total)
+            : null,
+      );
 
       if (preserveTimestamps && result['modificationTime'] != null) {
         try {
@@ -2694,7 +3296,6 @@ class FilenClient {
 
         final localFile = File(localPath);
 
-        // Handle conflict
         if (await localFile.exists()) {
           if (onConflict == 'skip') {
             print('⏭️  Skipping: ${p.basename(localPath)} (exists)');
@@ -2734,7 +3335,6 @@ class FilenClient {
               continue;
             }
           }
-          // onConflict == 'overwrite' - just proceed
         }
 
         try {
@@ -2742,7 +3342,14 @@ class FilenClient {
             print('📥 Downloading: ${p.basename(localPath)}');
           }
 
-          final result = await downloadFile(remoteUuid, savePath: localPath);
+          final result = await downloadFile(
+            remoteUuid,
+            savePath: localPath,
+            onProgress: onFileProgress != null
+                ? (bytes, total) =>
+                    onFileProgress(p.basename(localPath), bytes, total)
+                : null,
+          );
 
           final modTime = result['modificationTime'] ?? remoteModTime;
           if (preserveTimestamps && modTime != null) {
