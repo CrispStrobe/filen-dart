@@ -19,6 +19,13 @@ import 'package:pointycastle/export.dart' hide Digest, HMac, SHA512Digest;
 import 'package:glob/glob.dart';
 import 'package:glob/list_local_fs.dart';
 
+// WebDAV Imports
+import 'package:shelf/shelf_io.dart' as shelf_io;
+import 'package:shelf_dav/shelf_dav.dart'; // Exports: ShelfDAV, DAVConfig, BasicAuthenticationProvider, RoleBasedAuthorizationProvider
+import 'package:file/file.dart' as file_pkg;
+import 'package:file/local.dart';
+import 'webdav_filesystem.dart';
+
 void main(List<String> arguments) async {
   final cli = FilenCLI();
   await cli.run(arguments);
@@ -61,22 +68,32 @@ class FilenCLI {
 
   Future<void> run(List<String> arguments) async {
     final parser = ArgParser()
-    ..addFlag('verbose', abbr: 'v', help: 'Enable verbose debug output')
-    ..addFlag('force', abbr: 'f', help: 'Force overwrite / ignore conflicts')
-    ..addFlag('uuids', help: 'Show full UUIDs in list/search commands')
-    ..addFlag('recursive', abbr: 'r', help: 'Recursive operation')
-    ..addFlag('preserve-timestamps', abbr: 'p', help: 'Preserve file modification times')
-    ..addOption('target', abbr: 't', help: 'Destination path')
-    ..addOption('on-conflict', 
-        help: 'Action if target exists (overwrite/skip/newer)',
-        allowed: ['overwrite', 'skip', 'newer'],
-        defaultsTo: 'skip')
-    ..addMultiOption('include', help: 'Include only files matching pattern')
-    ..addMultiOption('exclude', help: 'Exclude files matching pattern')
-    ..addFlag('detailed', abbr: 'd', help: 'Show detailed information')
-    ..addOption('depth', abbr: 'l', help: 'Maximum depth for tree', defaultsTo: '3')
-    ..addOption('maxdepth', help: 'Limit find to N levels (-1 for infinite)', defaultsTo: '-1');
-    
+      ..addFlag('verbose', abbr: 'v', help: 'Enable verbose debug output')
+      ..addFlag('force', abbr: 'f', help: 'Force overwrite / ignore conflicts')
+      ..addFlag('uuids', help: 'Show full UUIDs in list/search commands')
+      ..addFlag('recursive', abbr: 'r', help: 'Recursive operation')
+      ..addFlag('preserve-timestamps',
+          abbr: 'p', help: 'Preserve file modification times')
+      ..addOption('target', abbr: 't', help: 'Destination path')
+      ..addOption('on-conflict',
+          help: 'Action if target exists (overwrite/skip/newer)',
+          allowed: ['overwrite', 'skip', 'newer'],
+          defaultsTo: 'skip')
+      ..addMultiOption('include', help: 'Include only files matching pattern')
+      ..addMultiOption('exclude', help: 'Exclude files matching pattern')
+      ..addFlag('detailed', abbr: 'd', help: 'Show detailed information')
+      ..addOption('depth',
+          abbr: 'l', help: 'Maximum depth for tree', defaultsTo: '3')
+      ..addOption('maxdepth',
+          help: 'Limit find to N levels (-1 for infinite)', defaultsTo: '-1')
+      ..addFlag('background',
+          abbr: 'b', help: 'Run WebDAV server in background')
+      ..addFlag('daemon',
+          hide: true, help: 'Internal: run as daemon process') // <-- ADD THIS
+      ..addOption('mount-point', abbr: 'm', help: 'WebDAV mount point path')
+      ..addOption('port', help: 'WebDAV server port', defaultsTo: '8080')
+      ..addFlag('webdav-debug', help: 'Enable WebDAV debug logging');
+
     try {
       final argResults = parser.parse(arguments);
       debugMode = argResults['verbose'];
@@ -176,6 +193,33 @@ class FilenCLI {
         case 'help':
           printHelp();
           break;
+        case 'mount':
+        case 'webdav':
+          await handleMount(argResults);
+          break;
+        case 'webdav-start':
+          await handleWebdavStart(argResults);
+          break;
+
+        case 'webdav-stop':
+          await handleWebdavStop(argResults);
+          break;
+
+        case 'webdav-status':
+          await handleWebdavStatus(argResults);
+          break;
+
+        case 'webdav-test':
+          await handleWebdavTest(argResults);
+          break;
+
+        case 'webdav-mount':
+          await handleWebdavMount(argResults);
+          break;
+
+        case 'webdav-config':
+          await handleWebdavConfig(argResults);
+          break;
         default:
           _exit('Unknown command: $command');
       }
@@ -188,25 +232,28 @@ class FilenCLI {
 
   void printHelp() {
     print('╔═════════════════════════════════════════════╗');
-    print('║    Filen CLI - Enhanced v1.0                ║');
-    print('║    Feature-complete with batching & cache   ║');
+    print('║    Filen CLI - v0.0.3                       ║');
     print('╚═════════════════════════════════════════════╝');
     print('');
     print('Flags:');
     print('  -v, --verbose              Enable debug output');
     print('  -f, --force                Skip confirmations');
+    print('  -b, --background           Run WebDAV in background');
     print('  --uuids                    Show full UUIDs');
     print('  -r, --recursive            Recursive operations');
     print('  -p, --preserve-timestamps  Preserve modification times');
     print('  -d, --detailed             Show detailed info');
     print('  -t, --target <path>        Destination path');
-    print('  --on-conflict <mode>       skip/overwrite (default: skip)');
+    print('  --on-conflict <mode>       skip/overwrite/newer (default: skip)');
     print('  --include <pattern>        Include file pattern');
     print('  --exclude <pattern>        Exclude file pattern');
     print('  -l, --depth <n>            Tree depth (default: 3)');
     print('  --maxdepth <n>             Find depth (-1: infinite)');
+    print('  -m, --mount-point <path>   WebDAV mount point');
+    print('  --port <n>                 WebDAV port (default: 8080)');
+    print('  --webdav-debug             WebDAV debug logging');
     print('');
-    print('Commands:');
+    print('File Operations:');
     print('  login                      Login to account');
     print('  whoami                     Show current user');
     print('  logout                     Logout and clear credentials');
@@ -228,16 +275,32 @@ class FilenCLI {
     print('  find <path> <pattern>      Recursive file find');
     print('  tree [path]                Show folder tree');
     print('  config                     Show configuration');
-    print('  help                       Show this help');
+    print('');
+    print('WebDAV Server:');
+    print('  mount                      Start WebDAV (foreground)');
+    print('  webdav-start               Start WebDAV server');
+    print('  webdav-start -b            Start in background');
+    print('  webdav-stop                Stop background server');
+    print('  webdav-status              Check server status');
+    print('  webdav-test                Test server connection');
+    print('  webdav-mount               Show mount instructions');
+    print('  webdav-config              Show server config');
     print('');
     print('Examples:');
-    print('  filen login');
-    print('  filen ls /Documents -d');
-    print('  filen up file.txt -t /Docs -p');
-    print('  filen download-path /file.txt -p');
-    print('  filen tree / -l 2');
-    print('  filen find / "*.pdf" --maxdepth 3');
-    print('  filen search "report"');
+    print('  dart filen.dart login');
+    print('  dart filen.dart ls /Documents -d');
+    print('  dart filen.dart up file.txt -t /Docs -p');
+    print('  dart filen.dart download-path /file.txt -p');
+    print('  dart filen.dart tree / -l 2');
+    print('  dart filen.dart find / "*.pdf" --maxdepth 3');
+    print('  dart filen.dart search "report"');
+    print('');
+    print('WebDAV Examples:');
+    print('  dart filen.dart webdav-start -b --port 8080');
+    print('  dart filen.dart webdav-status');
+    print('  dart filen.dart webdav-test');
+    print('  dart filen.dart webdav-mount');
+    print('  dart filen.dart webdav-stop');
   }
 
   // ---------------------------------------------------------------------------
@@ -414,22 +477,22 @@ class FilenCLI {
     if (sources.isEmpty) _exit('No source files specified');
 
     await _prepareClient();
-    
+
     // Extract targetPath correctly - it should be the LAST argument
     String targetPath = '/';
     List<String> actualSources = sources;
-    
+
     if (argResults.wasParsed('target')) {
-        targetPath = argResults['target'] as String;
+      targetPath = argResults['target'] as String;
     } else if (sources.length > 1) {
-        // Check if last argument looks like a path (not a file pattern)
-        final lastArg = sources.last;
-        if (lastArg.startsWith('/') || !lastArg.contains('*')) {
+      // Check if last argument looks like a path (not a file pattern)
+      final lastArg = sources.last;
+      if (lastArg.startsWith('/') || !lastArg.contains('*')) {
         targetPath = lastArg;
         actualSources = sources.sublist(0, sources.length - 1);
-        }
+      }
     }
-    
+
     final recursive = argResults['recursive'] as bool;
     final onConflict = argResults['on-conflict'] as String;
     final preserveTimestamps = argResults['preserve-timestamps'] as bool;
@@ -438,11 +501,11 @@ class FilenCLI {
 
     final batchId = config.generateBatchId('upload', actualSources, targetPath);
     print("🔄 Batch ID: $batchId");
-    print("🎯 Target: $targetPath");  // Add this for visibility
+    print("🎯 Target: $targetPath"); // Add this for visibility
     var batchState = await config.loadBatchState(batchId);
 
     try {
-        await client.upload(
+      await client.upload(
         actualSources,
         targetPath,
         recursive: recursive,
@@ -453,158 +516,164 @@ class FilenCLI {
         batchId: batchId,
         initialBatchState: batchState,
         saveStateCallback: (state) => config.saveBatchState(batchId, state),
-        );
+      );
 
-        await config.deleteBatchState(batchId);
-        print("✅ Upload batch completed.");
+      await config.deleteBatchState(batchId);
+      print("✅ Upload batch completed.");
     } catch (e) {
-        _exit('Upload failed: $e');
+      _exit('Upload failed: $e');
     }
-    }
+  }
 
   Future<void> handleDownload(ArgResults argResults) async {
     final args = argResults.rest.sublist(1);
     if (args.isEmpty) _exit('Usage: dl <file-uuid-or-path>');
-    
+
     await _prepareClient();
-    
+
     final input = args[0];
     final onConflict = argResults['on-conflict'] as String;
-    
+
     // Check if input looks like a UUID
-    final isUuid = RegExp(r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$', 
-                            caseSensitive: false).hasMatch(input);
-    
+    final isUuid = RegExp(
+            r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$',
+            caseSensitive: false)
+        .hasMatch(input);
+
     if (isUuid) {
-        // Original UUID-based download
-        print('📥 Downloading file by UUID: $input');
-        try {
+      // Original UUID-based download
+      print('📥 Downloading file by UUID: $input');
+      try {
         final result = await client.downloadFile(input);
         final data = result['data'] as Uint8List;
         final filename = result['filename'] as String;
         final remoteModTime = result['modificationTime'];
 
         final file = File(filename);
-        
+
         // Check conflict
         if (await file.exists()) {
-            if (onConflict == 'overwrite' || force) {
+          if (onConflict == 'overwrite' || force) {
             if (force) {
-                print('⚠️  File exists, overwriting (--force)');
+              print('⚠️  File exists, overwriting (--force)');
             } else {
-                print('⚠️  File exists, overwriting (--on-conflict overwrite)');
+              print('⚠️  File exists, overwriting (--on-conflict overwrite)');
             }
-            } else if (onConflict == 'skip') {
+          } else if (onConflict == 'skip') {
             print('⏭️  Skipping: $filename (exists, --on-conflict skip)');
             return;
-            } else if (onConflict == 'newer') {
+          } else if (onConflict == 'newer') {
             if (remoteModTime != null) {
-                final localStat = await file.stat();
-                final localModTime = localStat.modified;
-                
-                DateTime remoteDateTime;
-                if (remoteModTime is int) {
-                remoteDateTime = DateTime.fromMillisecondsSinceEpoch(remoteModTime);
-                } else {
+              final localStat = await file.stat();
+              final localModTime = localStat.modified;
+
+              DateTime remoteDateTime;
+              if (remoteModTime is int) {
+                remoteDateTime =
+                    DateTime.fromMillisecondsSinceEpoch(remoteModTime);
+              } else {
                 remoteDateTime = DateTime.parse(remoteModTime.toString());
-                }
-                
-                if (!remoteDateTime.isAfter(localModTime)) {
+              }
+
+              if (!remoteDateTime.isAfter(localModTime)) {
                 print('⏭️  Skipping: $filename (local is newer or same)');
                 return;
-                }
-                print('⚠️  Remote file is newer, downloading...');
+              }
+              print('⚠️  Remote file is newer, downloading...');
             } else {
-                print('⚠️  Cannot compare timestamps, skipping');
-                return;
+              print('⚠️  Cannot compare timestamps, skipping');
+              return;
             }
-            } else {
+          } else {
             // No flag set - prompt user
             stdout.write('⚠️  File "$filename" exists. Overwrite? [y/N]: ');
             final response = stdin.readLineSync()?.toLowerCase().trim();
             if (response != 'y' && response != 'yes') {
-                print('❌ Download cancelled');
-                return;
+              print('❌ Download cancelled');
+              return;
             }
-            }
+          }
         }
-        
+
         await file.writeAsBytes(data);
 
         print('✅ Downloaded: $filename (${formatSize(data.length)})');
-        } catch (e) {
+      } catch (e) {
         _exit('Download failed: $e');
-        }
+      }
     } else {
-        // Path-based download - resolve first
-        print('🔍 Resolving path: $input');
-        
-        try {
+      // Path-based download - resolve first
+      print('🔍 Resolving path: $input');
+
+      try {
         final resolved = await client.resolvePath(input);
-        
+
         if (resolved['type'] != 'file') {
-            _exit("'$input' is not a file. Use 'download-path -r' for folders.");
+          _exit("'$input' is not a file. Use 'download-path -r' for folders.");
         }
-        
+
         final fileUuid = resolved['uuid'];
         final filename = p.basename(input);
         final localFile = File(filename);
         final metadata = resolved['metadata'];
-        final remoteModTime = metadata?['lastModified'] ?? metadata?['timestamp'];
-        
+        final remoteModTime =
+            metadata?['lastModified'] ?? metadata?['timestamp'];
+
         // Check conflict
         if (await localFile.exists()) {
-            if (onConflict == 'overwrite' || force) {
+          if (onConflict == 'overwrite' || force) {
             if (force) {
-                print('⚠️  File exists, overwriting (--force)');
+              print('⚠️  File exists, overwriting (--force)');
             } else {
-                print('⚠️  File exists, overwriting (--on-conflict overwrite)');
+              print('⚠️  File exists, overwriting (--on-conflict overwrite)');
             }
-            } else if (onConflict == 'skip') {
+          } else if (onConflict == 'skip') {
             print('⏭️  Skipping: $filename (exists, --on-conflict skip)');
             return;
-            } else if (onConflict == 'newer') {
+          } else if (onConflict == 'newer') {
             if (remoteModTime != null) {
-                final localStat = await localFile.stat();
-                final localModTime = localStat.modified;
-                
-                DateTime remoteDateTime;
-                if (remoteModTime is int) {
-                remoteDateTime = DateTime.fromMillisecondsSinceEpoch(remoteModTime);
-                } else {
+              final localStat = await localFile.stat();
+              final localModTime = localStat.modified;
+
+              DateTime remoteDateTime;
+              if (remoteModTime is int) {
+                remoteDateTime =
+                    DateTime.fromMillisecondsSinceEpoch(remoteModTime);
+              } else {
                 remoteDateTime = DateTime.parse(remoteModTime.toString());
-                }
-                
-                if (!remoteDateTime.isAfter(localModTime)) {
+              }
+
+              if (!remoteDateTime.isAfter(localModTime)) {
                 print('⏭️  Skipping: $filename (local is newer or same)');
                 return;
-                }
-                print('⚠️  Remote file is newer, downloading...');
+              }
+              print('⚠️  Remote file is newer, downloading...');
             } else {
-                print('⚠️  Cannot compare timestamps, skipping');
-                return;
+              print('⚠️  Cannot compare timestamps, skipping');
+              return;
             }
-            } else {
+          } else {
             // No flag set - prompt user
             stdout.write('⚠️  File "$filename" exists. Overwrite? [y/N]: ');
             final response = stdin.readLineSync()?.toLowerCase().trim();
             if (response != 'y' && response != 'yes') {
-                print('❌ Download cancelled');
-                return;
+              print('❌ Download cancelled');
+              return;
             }
-            }
+          }
         }
-        
+
         print('📥 Downloading: $filename');
-        
+
         final result = await client.downloadFile(fileUuid, savePath: filename);
-        
-        print('✅ Downloaded: $filename (${formatSize(localFile.lengthSync())})');
-        } catch (e) {
+
+        print(
+            '✅ Downloaded: $filename (${formatSize(localFile.lengthSync())})');
+      } catch (e) {
         _exit('Download failed: $e');
-        }
+      }
     }
-    }
+  }
 
   Future<void> handleDownloadPath(ArgResults argResults) async {
     final args = argResults.rest.sublist(1);
@@ -620,12 +689,13 @@ class FilenCLI {
     final include = argResults['include'] as List<String>;
     final exclude = argResults['exclude'] as List<String>;
 
-    final batchId = config.generateBatchId('download', [remotePath], localDestination ?? '.');
+    final batchId = config.generateBatchId(
+        'download', [remotePath], localDestination ?? '.');
     print("🔄 Batch ID: $batchId");
     var batchState = await config.loadBatchState(batchId);
 
     try {
-        await client.downloadPath(
+      await client.downloadPath(
         remotePath,
         localDestination: localDestination,
         recursive: recursive,
@@ -636,14 +706,14 @@ class FilenCLI {
         batchId: batchId,
         initialBatchState: batchState,
         saveStateCallback: (state) => config.saveBatchState(batchId, state),
-        );
+      );
 
-        await config.deleteBatchState(batchId);
-        print("✅ Download batch completed.");
+      await config.deleteBatchState(batchId);
+      print("✅ Download batch completed.");
     } catch (e) {
-        _exit('Download failed: $e');
+      _exit('Download failed: $e');
     }
-    }
+  }
 
   Future<void> handleMove(String srcPath, String destPath) async {
     await _prepareClient();
@@ -876,20 +946,18 @@ class FilenCLI {
 
   Future<void> handleRestoreUuid(ArgResults argResults) async {
     final args = argResults.rest.sublist(1);
-    if (args.isEmpty) _exit('Usage: restore-uuid <uuid> [-t /dest]');
+    if (args.isEmpty) _exit('Usage: restore-uuid <uuid>');
 
     await _prepareClient();
 
     final itemUuid = args[0];
-    final destinationPath = argResults['target'] as String? ?? '/';
     final forceFlag = argResults['force'] as bool;
 
-    final destInfo = await client.resolvePath(destinationPath);
-    if (destInfo['type'] != 'folder') _exit("Destination must be a folder.");
-    final destUuid = destInfo['uuid'] as String;
+    // Note: The API restores to the ORIGINAL parent.
+    // We cannot easily specify a new target (-t) during the restore call.
 
     if (!forceFlag) {
-      final prompt = '❓ Restore item "$itemUuid" to "$destinationPath"?';
+      final prompt = '❓ Restore item "$itemUuid" to original location?';
       if (!_confirmAction(prompt)) {
         print("❌ Cancelled");
         return;
@@ -898,43 +966,42 @@ class FilenCLI {
 
     print("🚀 Restoring item...");
     try {
-      await client.moveItem(itemUuid, destUuid, 'file');
-      print("✅ Restored (as file) to: $destinationPath");
-    } catch (fileErr) {
+      // Try restoring as file first
       try {
-        await client.moveItem(itemUuid, destUuid, 'folder');
-        print("✅ Restored (as folder) to: $destinationPath");
-      } catch (folderErr) {
-        _exit("Failed to restore: $folderErr");
+        await client.restoreItem(itemUuid, 'file');
+        print("✅ Restored (file).");
+      } catch (_) {
+        // If failed, try as folder
+        await client.restoreItem(itemUuid, 'folder');
+        print("✅ Restored (folder).");
       }
+    } catch (e) {
+      _exit("Failed to restore: $e");
     }
   }
 
   Future<void> handleRestorePath(ArgResults argResults) async {
     final args = argResults.rest.sublist(1);
-    if (args.isEmpty) _exit('Usage: restore-path <name> [-t /dest]');
+    if (args.isEmpty) _exit('Usage: restore-path <name>');
 
     await _prepareClient();
 
     final itemName = args[0];
-    final destinationPath = argResults['target'] as String? ?? '/';
     final forceFlag = argResults['force'] as bool;
 
-    final destInfo = await client.resolvePath(destinationPath);
-    if (destInfo['type'] != 'folder') _exit("Destination must be a folder.");
-    final destUuid = destInfo['uuid'] as String;
-
     print("🔍 Finding '$itemName' in trash...");
+    // This now uses the working getTrashContent()
     final trashItems = await client.getTrashContent();
 
     final matches = trashItems.where((i) => i['name'] == itemName).toList();
 
     if (matches.isEmpty) _exit("Item '$itemName' not found in trash.");
     if (matches.length > 1) {
-      stderr.writeln("❌ Multiple items named '$itemName' found.");
-      stderr.writeln("   Use 'restore-uuid' with specific UUID:");
+      stderr.writeln("❌ Multiple items named '$itemName' found in trash.");
+      stderr.writeln("   Use 'restore-uuid' with one of these UUIDs:");
       for (var m in matches) {
-        stderr.writeln("   - ${m['type']} ${m['uuid']}");
+        stderr.writeln(
+            "   - ${m['type']} ${m['uuid']} (Size: ${formatSize(m['size'])})");
       }
       exit(1);
     }
@@ -944,7 +1011,7 @@ class FilenCLI {
     final itemType = item['type'] as String;
 
     if (!forceFlag) {
-      final prompt = '❓ Restore $itemType "$itemName" to "$destinationPath"?';
+      final prompt = '❓ Restore $itemType "$itemName" to original location?';
       if (!_confirmAction(prompt)) {
         print("❌ Cancelled");
         return;
@@ -953,8 +1020,8 @@ class FilenCLI {
 
     print("🚀 Restoring item...");
     try {
-      await client.moveItem(itemUuid, destUuid, itemType);
-      print("✅ Restored to: $destinationPath");
+      await client.restoreItem(itemUuid, itemType);
+      print("✅ Restored.");
     } catch (e) {
       _exit("Restore failed: $e");
     }
@@ -1095,6 +1162,389 @@ class FilenCLI {
     print('   Egest: https://egest.filen.io');
   }
 
+  // WebDAV Daemon Methods
+
+  Future<void> handleWebdavStart(ArgResults argResults) async {
+    final bool background = argResults['background'] ?? false;
+    final bool isDaemon = argResults['daemon'] ?? false;
+    final int port = int.tryParse(argResults['port'] ?? '8080') ?? 8080;
+
+    // If running as daemon (spawned by background start), just run the server
+    if (isDaemon) {
+      await handleMount(argResults);
+      return;
+    }
+
+    // Check for existing instance
+    final existingPid = await config.readWebdavPid();
+    if (existingPid != null) {
+      // Check if process is actually running
+      final isRunning = await _isProcessRunning(existingPid);
+
+      if (isRunning) {
+        stderr
+            .writeln('❌ WebDAV server is already running (PID: $existingPid).');
+        stderr
+            .writeln('💡 Run "dart filen.dart webdav-stop" to stop it first.');
+        exit(1);
+      } else {
+        // Stale PID file, clear it
+        await config.clearWebdavPid();
+      }
+    }
+
+    if (background) {
+      print('🚀 Starting WebDAV server in background...');
+      try {
+        // Start the daemon process
+        final process = await Process.start(
+          Platform.executable,
+          [
+            Platform.script.toFilePath(),
+            'webdav-start',
+            '--daemon',
+            '--port=$port',
+          ],
+          mode: ProcessStartMode.detached,
+        );
+
+        // Give it time to start up
+        await Future.delayed(Duration(milliseconds: 1000));
+
+        // Verify it's running
+        final isRunning = await _isProcessRunning(process.pid);
+
+        if (!isRunning) {
+          stderr.writeln('❌ Failed to start background process');
+          await config.clearWebdavPid();
+          exit(1);
+        }
+
+        await config.saveWebdavPid(process.pid);
+
+        print('✅ WebDAV server started in background (PID: ${process.pid})');
+        print('   URL: http://localhost:$port/');
+        print('   User: filen');
+        print('   Pass: filen-webdav');
+        print('\n💡 Use "dart filen.dart webdav-test" to verify connection');
+        print('💡 Use "dart filen.dart webdav-status" to check status');
+        print('💡 Use "dart filen.dart webdav-stop" to stop');
+        exit(0);
+      } catch (e) {
+        stderr.writeln('❌ Failed to start background process: $e');
+        await config.clearWebdavPid();
+        exit(1);
+      }
+    }
+
+    // Foreground mode
+    print('🚀 Starting WebDAV server in foreground...');
+    print('   (Press Ctrl+C to stop)');
+    await handleMount(argResults);
+  }
+
+  Future<void> handleWebdavStop(ArgResults argResults) async {
+    print('🛑 Stopping WebDAV server...');
+    final pid = await config.readWebdavPid();
+
+    if (pid == null) {
+      print('❌ Server does not appear to be running (no PID file).');
+      await config.clearWebdavPid();
+      exit(1);
+    }
+
+    try {
+      // First check if process exists
+      final exists = await _isProcessRunning(pid);
+
+      if (!exists) {
+        print('⚠️  Process (PID: $pid) is not running. Cleaning up PID file.');
+        await config.clearWebdavPid();
+        exit(0);
+      }
+
+      // Try graceful shutdown with SIGTERM
+      final success = Process.killPid(pid, ProcessSignal.sigterm);
+
+      if (success) {
+        // Wait a moment for graceful shutdown
+        await Future.delayed(Duration(milliseconds: 500));
+
+        // Check if it's still running
+        final stillRunning = await _isProcessRunning(pid);
+
+        if (stillRunning) {
+          // Force kill if still running
+          print('⚠️  Forcing termination...');
+          Process.killPid(pid, ProcessSignal.sigkill);
+          await Future.delayed(Duration(milliseconds: 200));
+        }
+
+        print('✅ Server process (PID: $pid) terminated.');
+      } else {
+        print(
+            '⚠️  Could not terminate process (PID: $pid). It may already be stopped.');
+      }
+    } catch (e) {
+      print('⚠️  Error terminating process: $e');
+    }
+
+    await config.clearWebdavPid();
+  }
+
+  Future<bool> _isProcessRunning(int pid) async {
+    try {
+      if (Platform.isWindows) {
+        // Windows: use tasklist
+        final result = await Process.run('tasklist', ['/FI', 'PID eq $pid']);
+        return result.stdout.toString().contains(pid.toString());
+      } else {
+        // Unix-like: use ps
+        final result = await Process.run('ps', ['-p', pid.toString()]);
+        return result.exitCode == 0;
+      }
+    } catch (e) {
+      return false;
+    }
+  }
+
+  Future<void> handleWebdavStatus(ArgResults argResults) async {
+    final pid = await config.readWebdavPid();
+    final port = int.tryParse(argResults['port'] ?? '8080') ?? 8080;
+
+    if (pid == null) {
+      print('❌ WebDAV server is not running (no PID file).');
+      print('💡 Start with: dart filen.dart webdav-start --background');
+      exit(1);
+    }
+
+    // Check if process actually exists
+    final isRunning = await _isProcessRunning(pid);
+
+    if (!isRunning) {
+      print('❌ WebDAV server PID file exists but process is not running.');
+      print('   Stale PID: $pid');
+      print('💡 Run "dart filen.dart webdav-stop" to clean up.');
+      exit(1);
+    }
+
+    print('✅ WebDAV server is running in background.');
+    print('   PID: $pid');
+    print('   URL: http://localhost:$port/');
+    print('   User: filen');
+    print('   Pass: filen-webdav');
+    print('\n💡 Use "dart filen.dart webdav-test" to verify connection.');
+    print('💡 Use "dart filen.dart webdav-stop" to stop it.');
+  }
+
+  Future<void> handleWebdavMount(ArgResults argResults) async {
+    final port = int.tryParse(argResults['port'] ?? '8080') ?? 8080;
+    final url = 'http://localhost:$port/';
+
+    print('🗂️  Mount Instructions for Filen Drive');
+    print('=' * 50);
+    print('Server URL: $url');
+    print('Username:   filen');
+    print('Password:   filen-webdav');
+
+    print('\n--- macOS ---');
+    print('1. Open Finder');
+    print('2. Press Cmd+K (Go > Connect to Server)');
+    print('3. Enter: $url');
+    print('4. Connect, then enter username and password.');
+
+    print('\n--- Windows ---');
+    print('1. Open File Explorer');
+    print('2. Right-click "This PC" > "Map network drive..."');
+    print('3. Enter: $url');
+    print('4. Check "Connect using different credentials"');
+    print('5. Connect, then enter username and password.');
+
+    print('\n--- Linux (davfs2) ---');
+    print('sudo apt install davfs2');
+    print('sudo mkdir -p /mnt/filen');
+    print('sudo mount -t davfs $url /mnt/filen');
+    print('(You will be prompted for username and password)');
+  }
+
+  Future<void> handleWebdavTest(ArgResults argResults) async {
+    final port = int.tryParse(argResults['port'] ?? '8080') ?? 8080;
+    final url = Uri.parse('http://localhost:$port/');
+
+    print('🧪 Testing WebDAV server connection at $url ...');
+
+    final propfindBody = '''
+    <?xml version="1.0" encoding="utf-8"?>
+    <D:propfind xmlns:D="DAV:">
+        <D:prop>
+            <D:resourcetype/>
+        </D:prop>
+    </D:propfind>
+    ''';
+
+    final basicAuth =
+        'Basic ${base64Encode(utf8.encode('filen:filen-webdav'))}';
+
+    try {
+      final request = http.Request('PROPFIND', url)
+        ..headers['Authorization'] = basicAuth
+        ..headers['Depth'] = '0'
+        ..headers['Content-Type'] = 'application/xml'
+        ..body = propfindBody;
+
+      final response =
+          await http.Client().send(request).timeout(Duration(seconds: 10));
+      final responseBody = await response.stream.bytesToString();
+
+      if (response.statusCode == 207 && responseBody.contains('<?xml')) {
+        print('✅ Connection successful! (Received 207 Multi-Status)');
+        print('   Server is running and authentication is working.');
+      } else {
+        print('❌ Connection failed.');
+        print('   Server returned status: ${response.statusCode}');
+        print(
+            '   Response: ${responseBody.substring(0, min(100, responseBody.length))}...');
+      }
+    } catch (e) {
+      if (e is SocketException) {
+        print(
+            '❌ Connection failed: Server is not running or unreachable at $url');
+      } else if (e is TimeoutException) {
+        print('❌ Connection timed out. Is the server running?');
+      } else {
+        print('❌ Connection test failed: $e');
+      }
+    }
+  }
+
+  Future<void> handleWebdavConfig(ArgResults argResults) async {
+    final port = int.tryParse(argResults['port'] ?? '8080') ?? 8080;
+
+    print('⚙️  WebDAV Server Configuration');
+    print('=' * 40);
+    print('   Host: localhost');
+    print('   Port: $port');
+    print('   User: filen');
+    print('   Pass: filen-webdav');
+    print('   Protocol: http (SSL not implemented in this version)');
+    print('   Background PID File: ${config.webdavPidFile}');
+  }
+
+  Future<void> handleMount(ArgResults argResults) async {
+    await _prepareClient();
+
+    final port = int.tryParse(argResults['port'] ?? '8080') ?? 8080;
+    final mountPoint = argResults['mount-point'] as String?;
+    final webdavDebug = argResults['webdav-debug'] as bool;
+
+    print('╔═══════════════════════════════════════════════╗');
+    print('║    Filen WebDAV Server                        ║');
+    print('╚═══════════════════════════════════════════════╝');
+    print('');
+    print('🔐 User: ${client.email}');
+    print('🌐 Starting WebDAV server on port $port...');
+    print('');
+
+    try {
+      // Create the virtual filesystem
+      final filenFS = FilenFileSystem(client: client);
+
+      // Create WebDAV config
+      final davConfig = DAVConfig(
+        root: filenFS.directory('/'),
+        prefix: '/',
+        authenticationProvider: BasicAuthenticationProvider.plaintext(
+          realm: 'Filen WebDAV',
+          users: {'filen': 'filen-webdav'},
+        ),
+        authorizationProvider: RoleBasedAuthorizationProvider(
+          readWriteUsers: {'filen'},
+          allowAnonymousRead: false,
+        ),
+        enableLocking: true,
+      );
+
+      // Create ShelfDAV instance
+      final dav = ShelfDAV.withConfig(davConfig);
+
+      // Start the shelf server
+      final server = await shelf_io.serve(
+        dav.handler,
+        '0.0.0.0',
+        port,
+      );
+
+      print('✅ WebDAV server started successfully!');
+      print('');
+      print('📡 Server URL: http://localhost:$port/');
+      print('📡 Network URL: http://${await _getLocalIpAddress()}:$port/');
+      print('');
+      print('🔐 Authentication:');
+      print('   Username: filen');
+      print('   Password: filen-webdav');
+      print('');
+      print('📂 Mount instructions:');
+      print('');
+      print('   Linux (davfs2):');
+      print('   ─────────────────────────────────────────────');
+      print(
+          '   sudo mount -t davfs http://localhost:$port ${mountPoint ?? '/mnt/filen'}');
+      print('');
+      print('   macOS (Finder):');
+      print('   ─────────────────────────────────────────────');
+      print('   1. Open Finder');
+      print('   2. Press Cmd+K');
+      print('   3. Enter: http://localhost:$port');
+      print('   4. Username: filen, Password: filen-webdav');
+      print('');
+      print('   Windows:');
+      print('   ─────────────────────────────────────────────');
+      print('   net use Z: http://localhost:$port /user:filen filen-webdav');
+      print('');
+      print('🛑 Press Ctrl+C to stop the server');
+      print('');
+
+      // Handle shutdown signals
+      ProcessSignal.sigint.watch().listen((_) async {
+        print('\n🛑 Shutting down WebDAV server...');
+        await server.close(force: true);
+        await config.clearWebdavPid();
+        print('✅ Server stopped gracefully.');
+        exit(0);
+      });
+
+      ProcessSignal.sigterm.watch().listen((_) async {
+        print('\n🛑 Shutting down WebDAV server...');
+        await server.close(force: true);
+        await config.clearWebdavPid();
+        print('✅ Server stopped gracefully.');
+        exit(0);
+      });
+    } catch (e, stackTrace) {
+      stderr.writeln('❌ Failed to start WebDAV server: $e');
+      if (debugMode || webdavDebug) {
+        stderr.writeln(stackTrace);
+      }
+      await config.clearWebdavPid();
+      exit(1);
+    }
+  }
+
+  Future<String> _getLocalIpAddress() async {
+    try {
+      final interfaces =
+          await NetworkInterface.list(type: InternetAddressType.IPv4);
+      for (var interface in interfaces) {
+        for (var addr in interface.addresses) {
+          if (!addr.isLoopback && addr.type == InternetAddressType.IPv4) {
+            return addr.address;
+          }
+        }
+      }
+    } catch (_) {}
+    return 'localhost';
+  }
+
   Future<void> _prepareClient() async {
     final c = await config.readCredentials();
     if (c == null) _exit('Not logged in');
@@ -1164,6 +1614,13 @@ class FilenClient {
 
   void _log(String msg) {
     if (debugMode) print('🔍 [DEBUG] $msg');
+  }
+
+  void logWebDAV(String message) {
+    if (debugMode) {
+      final timestamp = DateTime.now().toIso8601String();
+      print('[$timestamp] WebDAV: $message');
+    }
   }
 
   // --- Token Refresh (Filen doesn't have this, but adding stub for consistency) ---
@@ -1548,14 +2005,32 @@ class FilenClient {
   }
 
   Future<void> trashItem(String uuid, String type) async {
+    // API Doc: POST /file/trash or /dir/trash
     final endpoint = type == 'folder' ? '/v3/dir/trash' : '/v3/file/trash';
+
     await _post(endpoint, {'uuid': uuid});
     await _clearParentCache(uuid, type);
   }
 
+  Future<void> restoreItem(String uuid, String type) async {
+    // API Doc: POST /file/restore or /dir/restore
+    final endpoint = type == 'folder' ? '/v3/dir/restore' : '/v3/file/restore';
+
+    await _post(endpoint, {'uuid': uuid});
+
+    // Invalidate root or look up parent if possible, but simplest is to just proceed.
+    // The API puts it back in its original parent.
+  }
+
   Future<void> deletePermanently(String uuid, String type) async {
-    // Filen's trash deletion - same as trash for now
-    await trashItem(uuid, type);
+    // API Doc: POST /file/delete/permanent or /dir/delete/permanent
+    final endpoint = type == 'folder'
+        ? '/v3/dir/delete/permanent'
+        : '/v3/file/delete/permanent';
+
+    await _post(endpoint, {'uuid': uuid});
+    // We cannot clear parent cache easily as the item is in trash,
+    // but we should invalidate the trash list if we were caching it.
   }
 
   Future<void> renameItem(String uuid, String newName, String type) async {
@@ -1613,8 +2088,8 @@ class FilenClient {
     return true;
   }
 
-  Future<void> uploadFile(File file, String parent, 
-        {String? creationTime, String? modificationTime}) async {
+  Future<void> uploadFile(File file, String parent,
+      {String? creationTime, String? modificationTime}) async {
     final name = p.basename(file.path);
     final size = await file.length();
     final uuid = _uuid();
@@ -1626,34 +2101,36 @@ class FilenClient {
     // Get modification time
     var lastMod = modificationTime;
     if (lastMod == null && creationTime == null) {
-        try {
+      try {
         final stat = await file.stat();
         lastMod = stat.modified.millisecondsSinceEpoch.toString();
-        } catch (_) {}
+      } catch (_) {}
     }
 
     final metaJson = json.encode({
-        'name': name,
-        'size': size,
-        'mime': 'application/octet-stream',
-        'key': fileKeyStr,
-        'hash': '', // Empty hash for empty files
-        'lastModified': lastMod != null 
-            ? int.tryParse(lastMod) ?? DateTime.now().millisecondsSinceEpoch 
-            : DateTime.now().millisecondsSinceEpoch,
+      'name': name,
+      'size': size,
+      'mime': 'application/octet-stream',
+      'key': fileKeyStr,
+      'hash': '', // Empty hash for empty files
+      'lastModified': lastMod != null
+          ? int.tryParse(lastMod) ?? DateTime.now().millisecondsSinceEpoch
+          : DateTime.now().millisecondsSinceEpoch,
     });
 
     final nameEncrypted = await _encryptMetadata002(name, fileKeyStr);
-    final sizeEncrypted = await _encryptMetadata002(size.toString(), fileKeyStr);
-    final mimeEncrypted = await _encryptMetadata002('application/octet-stream', fileKeyStr);
+    final sizeEncrypted =
+        await _encryptMetadata002(size.toString(), fileKeyStr);
+    final mimeEncrypted =
+        await _encryptMetadata002('application/octet-stream', fileKeyStr);
     final metadataEncrypted = await _encryptMetadata002(metaJson, mk);
     final nameHashed = await _hashFileName(name);
 
     // FIX: Handle empty files separately
     if (size == 0) {
-        _log('Uploading empty file via /v3/upload/empty');
-        
-        await _post('/v3/upload/empty', {
+      _log('Uploading empty file via /v3/upload/empty');
+
+      await _post('/v3/upload/empty', {
         'uuid': uuid,
         'name': nameEncrypted,
         'nameHashed': nameHashed,
@@ -1662,10 +2139,10 @@ class FilenClient {
         'mime': mimeEncrypted,
         'metadata': metadataEncrypted,
         'version': 2,
-        });
+      });
 
-        _invalidateCache(parent);
-        return;
+      _invalidateCache(parent);
+      return;
     }
 
     // Regular file upload for non-empty files
@@ -1683,71 +2160,73 @@ class FilenClient {
 
     // Calculate total chunks for progress
     final totalChunks = (size / chunkSz).ceil();
-    
+
     while (offset < size) {
-        final len = min(chunkSz, size - offset);
-        final bytes = await raf.read(len);
-        byteSink.add(bytes);
-        final encChunk = await _encryptData(bytes, fileKeyBytes);
-        
-        // Calculate hash of encrypted chunk
-        final chunkHash = crypto.sha512.convert(encChunk);
-        final hashHex = HEX.encode(chunkHash.bytes).toLowerCase();
-        
-        // Add hash parameter to upload
-        final url = Uri.parse(
-        '$ingest/v3/upload?uuid=$uuid&index=$index&parent=$parent&uploadKey=$uploadKey&hash=$hashHex'
-        );
-        
-        // Progress indicator
-        final progress = ((index + 1) / totalChunks * 100).toStringAsFixed(1);
-        stdout.write('     Uploading... ${index + 1}/$totalChunks chunks ($progress%)  \r');
-        
-        final r = await http.post(url, body: encChunk, headers: {'Authorization': 'Bearer $apiKey'});
-        
-        if (r.statusCode != 200) {
+      final len = min(chunkSz, size - offset);
+      final bytes = await raf.read(len);
+      byteSink.add(bytes);
+      final encChunk = await _encryptData(bytes, fileKeyBytes);
+
+      // Calculate hash of encrypted chunk
+      final chunkHash = crypto.sha512.convert(encChunk);
+      final hashHex = HEX.encode(chunkHash.bytes).toLowerCase();
+
+      // Add hash parameter to upload
+      final url = Uri.parse(
+          '$ingest/v3/upload?uuid=$uuid&index=$index&parent=$parent&uploadKey=$uploadKey&hash=$hashHex');
+
+      // Progress indicator
+      final progress = ((index + 1) / totalChunks * 100).toStringAsFixed(1);
+      stdout.write(
+          '     Uploading... ${index + 1}/$totalChunks chunks ($progress%)  \r');
+
+      final r = await http.post(url,
+          body: encChunk, headers: {'Authorization': 'Bearer $apiKey'});
+
+      if (r.statusCode != 200) {
         print(''); // Clear progress line
         throw Exception('Chunk upload failed: ${r.statusCode} - ${r.body}');
-        }
-        
-        offset += len;
-        index++;
+      }
+
+      offset += len;
+      index++;
     }
-    
+
     print(''); // Clear progress line
     await raf.close();
     byteSink.close();
-        
+
     final totalHash = HEX.encode(digestSink.value?.bytes ?? []).toLowerCase();
 
     // Update metadata with actual hash
     final metaJsonWithHash = json.encode({
-        'name': name,
-        'size': size,
-        'mime': 'application/octet-stream',
-        'key': fileKeyStr,
-        'hash': totalHash,
-        'lastModified': lastMod != null 
-            ? int.tryParse(lastMod) ?? DateTime.now().millisecondsSinceEpoch 
-            : DateTime.now().millisecondsSinceEpoch,
+      'name': name,
+      'size': size,
+      'mime': 'application/octet-stream',
+      'key': fileKeyStr,
+      'hash': totalHash,
+      'lastModified': lastMod != null
+          ? int.tryParse(lastMod) ?? DateTime.now().millisecondsSinceEpoch
+          : DateTime.now().millisecondsSinceEpoch,
     });
-    final metadataEncryptedWithHash = await _encryptMetadata002(metaJsonWithHash, mk);
+    final metadataEncryptedWithHash =
+        await _encryptMetadata002(metaJsonWithHash, mk);
 
     await _post('/v3/upload/done', {
-        'uuid': uuid,
-        'name': nameEncrypted,
-        'nameHashed': nameHashed,
-        'size': sizeEncrypted,
-        'chunks': index,
-        'mime': mimeEncrypted,
-        'rm': rm,
-        'metadata': metadataEncryptedWithHash,
-        'version': 2,
-        'uploadKey': uploadKey,
+      'uuid': uuid,
+      'name': nameEncrypted,
+      'nameHashed': nameHashed,
+      'size': sizeEncrypted,
+      'chunks': index,
+      'mime': mimeEncrypted,
+      'rm': rm,
+      'metadata': metadataEncryptedWithHash,
+      'version': 2,
+      'uploadKey': uploadKey,
     });
 
     _invalidateCache(parent);
-    }
+  }
 
   Future<void> upload(
     List<String> sources,
@@ -1760,104 +2239,111 @@ class FilenClient {
     required String batchId,
     Map<String, dynamic>? initialBatchState,
     required Future<void> Function(Map<String, dynamic>) saveStateCallback,
-    }) async {
-    
+  }) async {
     _log("Upload target path: $targetPath");
 
     Map<String, dynamic> batchState;
     List<dynamic> tasks;
 
     if (initialBatchState != null) {
-        print("🔄 Resuming batch...");
-        batchState = initialBatchState;
-        tasks = batchState['tasks'] as List<dynamic>;
+      print("🔄 Resuming batch...");
+      batchState = initialBatchState;
+      tasks = batchState['tasks'] as List<dynamic>;
     } else {
-        print("🔍 Building task list...");
-        tasks = [];
-        
-        // FIX: Resolve/create target folder BEFORE processing sources
-        final targetFolderInfo = await _resolveOrCreateFolder(targetPath);
-        final targetFolderUuid = targetFolderInfo['uuid'];
-        _log("Target folder UUID: $targetFolderUuid");
+      print("🔍 Building task list...");
+      tasks = [];
 
-        for (final sourceArg in sources) {
-        final hasTrailingSlash = sourceArg.endsWith('/') || sourceArg.endsWith('\\');
+      // FIX: Resolve/create target folder BEFORE processing sources
+      final targetFolderInfo = await _resolveOrCreateFolder(targetPath);
+      final targetFolderUuid = targetFolderInfo['uuid'];
+      _log("Target folder UUID: $targetFolderUuid");
+
+      for (final sourceArg in sources) {
+        final hasTrailingSlash =
+            sourceArg.endsWith('/') || sourceArg.endsWith('\\');
         final glob = Glob(sourceArg.replaceAll('\\', '/'));
 
         await for (final entity in glob.list()) {
-            if (await FileSystemEntity.isDirectory(entity.path)) {
+          if (await FileSystemEntity.isDirectory(entity.path)) {
             if (!recursive) {
-                _log("Skipping directory (not recursive): ${entity.path}");
-                continue;
+              _log("Skipping directory (not recursive): ${entity.path}");
+              continue;
             }
-            
+
             final localDir = Directory(entity.path);
             String? dirCreationTime;
             String? dirModTime;
-            
+
             if (preserveTimestamps) {
-                try {
+              try {
                 final stat = await localDir.stat();
                 dirModTime = stat.modified.toUtc().toIso8601String();
                 dirCreationTime = stat.changed.toUtc().toIso8601String();
-                } catch (_) {}
+              } catch (_) {}
             }
 
             // FIX: Build correct remote base path
             String remoteBase;
             if (hasTrailingSlash) {
-                // Upload contents INTO target
-                remoteBase = targetPath;
+              // Upload contents INTO target
+              remoteBase = targetPath;
             } else {
-                // Upload directory itself INTO target
-                final dirName = p.basename(localDir.path);
-                remoteBase = p.join(targetPath, dirName).replaceAll('\\', '/');
+              // Upload directory itself INTO target
+              final dirName = p.basename(localDir.path);
+              remoteBase = p.join(targetPath, dirName).replaceAll('\\', '/');
             }
-            
+
             _log("Creating remote directory: $remoteBase");
             await createFolderRecursive(
-                remoteBase,
-                creationTime: dirCreationTime,
-                modificationTime: dirModTime,
+              remoteBase,
+              creationTime: dirCreationTime,
+              modificationTime: dirModTime,
             );
 
-            await for (final fileEntity in localDir.list(recursive: true, followLinks: false)) {
-                if (fileEntity is File) {
-                final relativePath = p.relative(fileEntity.path, from: localDir.path);
-                final remoteFilePath = p.join(remoteBase, relativePath).replaceAll('\\', '/');
+            await for (final fileEntity
+                in localDir.list(recursive: true, followLinks: false)) {
+              if (fileEntity is File) {
+                final relativePath =
+                    p.relative(fileEntity.path, from: localDir.path);
+                final remoteFilePath =
+                    p.join(remoteBase, relativePath).replaceAll('\\', '/');
 
-                if (shouldIncludeFile(p.basename(fileEntity.path), include, exclude)) {
-                    tasks.add({
+                if (shouldIncludeFile(
+                    p.basename(fileEntity.path), include, exclude)) {
+                  tasks.add({
                     'localPath': fileEntity.path,
                     'remotePath': remoteFilePath,
                     'status': 'pending',
-                    });
+                  });
                 }
-                }
+              }
             }
-            } else if (await FileSystemEntity.isFile(entity.path)) {
+          } else if (await FileSystemEntity.isFile(entity.path)) {
             final localFile = File(entity.path);
             // FIX: Files go INTO targetPath
-            final remoteFilePath = p.join(targetPath, p.basename(localFile.path)).replaceAll('\\', '/');
+            final remoteFilePath = p
+                .join(targetPath, p.basename(localFile.path))
+                .replaceAll('\\', '/');
 
-            if (shouldIncludeFile(p.basename(localFile.path), include, exclude)) {
-                tasks.add({
+            if (shouldIncludeFile(
+                p.basename(localFile.path), include, exclude)) {
+              tasks.add({
                 'localPath': localFile.path,
                 'remotePath': remoteFilePath,
                 'status': 'pending',
-                });
+              });
             }
-            }
+          }
         }
-        }
+      }
 
-        batchState = {
+      batchState = {
         'operationType': 'upload',
         'targetRemotePath': targetPath,
         'tasks': tasks,
-        };
-        await saveStateCallback(batchState);
-        print("📝 Task list: ${tasks.length} files");
+      };
+      await saveStateCallback(batchState);
+      print("📝 Task list: ${tasks.length} files");
     }
 
     int successCount = 0;
@@ -1866,88 +2352,89 @@ class FilenClient {
     int completedPreviously = 0;
 
     for (int i = 0; i < tasks.length; i++) {
-        final task = tasks[i] as Map<String, dynamic>;
-        final localPath = task['localPath'] as String;
-        final remotePath = task['remotePath'] as String;
-        final status = task['status'] as String;
+      final task = tasks[i] as Map<String, dynamic>;
+      final localPath = task['localPath'] as String;
+      final remotePath = task['remotePath'] as String;
+      final status = task['status'] as String;
 
-        if (status == 'completed') {
+      if (status == 'completed') {
         completedPreviously++;
         continue;
-        }
-        if (status.startsWith('skipped')) {
+      }
+      if (status.startsWith('skipped')) {
         skippedCount++;
         continue;
-        }
+      }
 
-        final localFile = File(localPath);
-        if (!await localFile.exists()) {
+      final localFile = File(localPath);
+      if (!await localFile.exists()) {
         print("⚠️ Source missing: ${p.basename(localPath)}");
         skippedCount++;
         task['status'] = 'skipped_missing';
         await saveStateCallback(batchState);
         continue;
-        }
+      }
 
-        final remoteParentPath = p.dirname(remotePath).replaceAll('\\', '/');
-        final remoteFileName = p.basename(remotePath);
-        
-        Map<String, dynamic> parentFolderInfo;
-        
-        try {
+      final remoteParentPath = p.dirname(remotePath).replaceAll('\\', '/');
+      final remoteFileName = p.basename(remotePath);
+
+      Map<String, dynamic> parentFolderInfo;
+
+      try {
         parentFolderInfo = await createFolderRecursive(remoteParentPath);
-        } catch (e) {
+      } catch (e) {
         print("❌ Error creating parent $remoteParentPath: $e");
         errorCount++;
         task['status'] = 'error_parent';
         await saveStateCallback(batchState);
         continue;
-        }
+      }
 
-        // Check conflict
-        final exists = await checkFileExists(parentFolderInfo['uuid'], remoteFileName);
-        if (exists) {
+      // Check conflict
+      final exists =
+          await checkFileExists(parentFolderInfo['uuid'], remoteFileName);
+      if (exists) {
         if (onConflict == 'skip') {
-            print("⏭️ Skipping: $remoteFileName (exists)");
-            skippedCount++;
-            task['status'] = 'skipped_conflict';
-            await saveStateCallback(batchState);
-            continue;
+          print("⏭️ Skipping: $remoteFileName (exists)");
+          skippedCount++;
+          task['status'] = 'skipped_conflict';
+          await saveStateCallback(batchState);
+          continue;
         }
-        }
+      }
 
-        try {
+      try {
         // ADD: Show which file we're uploading with size
         final fileSize = await localFile.length();
         print("📤 Uploading: $remoteFileName (${formatSize(fileSize)})");
-        
+
         String? creationTime;
         String? modificationTime;
-        
+
         if (preserveTimestamps) {
-            try {
+          try {
             final stat = await localFile.stat();
             modificationTime = stat.modified.millisecondsSinceEpoch.toString();
             creationTime = stat.changed.millisecondsSinceEpoch.toString();
-            } catch (_) {}
+          } catch (_) {}
         }
 
         await uploadFile(
-            localFile,
-            parentFolderInfo['uuid'],
-            creationTime: creationTime,
-            modificationTime: modificationTime,
+          localFile,
+          parentFolderInfo['uuid'],
+          creationTime: creationTime,
+          modificationTime: modificationTime,
         );
-        
+
         successCount++;
         task['status'] = 'completed';
-        } catch (e) {
+      } catch (e) {
         print("❌ Upload error: $e");
         errorCount++;
         task['status'] = 'error_upload';
-        }
-        
-        await saveStateCallback(batchState);
+      }
+
+      await saveStateCallback(batchState);
     }
 
     print("=" * 40);
@@ -1959,9 +2446,9 @@ class FilenClient {
     print("=" * 40);
 
     if (errorCount > 0) {
-        throw Exception("Upload completed with $errorCount errors");
+      throw Exception("Upload completed with $errorCount errors");
     }
-    }
+  }
 
   Future<Map<String, dynamic>> _resolveOrCreateFolder(String path) async {
     try {
@@ -2026,163 +2513,170 @@ class FilenClient {
     required String batchId,
     Map<String, dynamic>? initialBatchState,
     required Future<void> Function(Map<String, dynamic>) saveStateCallback,
-    }) async {
+  }) async {
     final itemInfo = await resolvePath(remotePath);
 
     if (itemInfo['type'] == 'file') {
-        final filename = p.basename(remotePath);
-        
-        if (!shouldIncludeFile(filename, include, exclude)) {
+      final filename = p.basename(remotePath);
+
+      if (!shouldIncludeFile(filename, include, exclude)) {
         print('🚫 Filtered out: $filename');
         return;
-        }
+      }
 
-        String localPath;
-        if (localDestination != null) {
+      String localPath;
+      if (localDestination != null) {
         final destEntity = FileSystemEntity.typeSync(localDestination);
         if (destEntity == FileSystemEntityType.directory) {
-            localPath = p.join(localDestination, filename);
+          localPath = p.join(localDestination, filename);
         } else {
-            localPath = localDestination;
+          localPath = localDestination;
         }
-        } else {
+      } else {
         localPath = filename;
-        }
+      }
 
-        final localFile = File(localPath);
-        
-        // Handle conflict
-        if (await localFile.exists()) {
+      final localFile = File(localPath);
+
+      // Handle conflict
+      if (await localFile.exists()) {
         if (onConflict == 'skip') {
-            print('⏭️  Skipping: $localPath (exists)');
-            return;
+          print('⏭️  Skipping: $localPath (exists)');
+          return;
         } else if (onConflict == 'newer') {
-            // Get remote modification time
-            final metadata = itemInfo['metadata'];
-            final remoteModTime = metadata?['lastModified'] ?? metadata?['timestamp'];
-            
-            if (remoteModTime != null) {
+          // Get remote modification time
+          final metadata = itemInfo['metadata'];
+          final remoteModTime =
+              metadata?['lastModified'] ?? metadata?['timestamp'];
+
+          if (remoteModTime != null) {
             final localStat = await localFile.stat();
             final localModTime = localStat.modified;
-            
+
             DateTime remoteDateTime;
             if (remoteModTime is int) {
-                remoteDateTime = DateTime.fromMillisecondsSinceEpoch(remoteModTime);
+              remoteDateTime =
+                  DateTime.fromMillisecondsSinceEpoch(remoteModTime);
             } else {
-                remoteDateTime = DateTime.parse(remoteModTime.toString());
+              remoteDateTime = DateTime.parse(remoteModTime.toString());
             }
-            
+
             if (!remoteDateTime.isAfter(localModTime)) {
-                print('⏭️  Skipping: $localPath (local is newer or same)');
-                return;
+              print('⏭️  Skipping: $localPath (local is newer or same)');
+              return;
             }
             print('📥 Downloading: $filename (remote is newer)');
-            } else {
+          } else {
             print('⚠️  Cannot compare timestamps, skipping: $localPath');
             return;
-            }
+          }
         }
         // onConflict == 'overwrite' - just proceed
-        }
+      }
 
-        print('📥 Downloading: $filename');
-        final result = await downloadFile(itemInfo['uuid'], savePath: localPath);
+      print('📥 Downloading: $filename');
+      final result = await downloadFile(itemInfo['uuid'], savePath: localPath);
 
-        if (preserveTimestamps && result['modificationTime'] != null) {
+      if (preserveTimestamps && result['modificationTime'] != null) {
         try {
-            DateTime mTime;
-            if (result['modificationTime'] is int) {
-            mTime = DateTime.fromMillisecondsSinceEpoch(result['modificationTime']);
-            } else {
+          DateTime mTime;
+          if (result['modificationTime'] is int) {
+            mTime =
+                DateTime.fromMillisecondsSinceEpoch(result['modificationTime']);
+          } else {
             mTime = DateTime.parse(result['modificationTime'].toString());
-            }
-            await localFile.setLastModified(mTime);
-            print('   🕐 Set timestamp: $mTime');
+          }
+          await localFile.setLastModified(mTime);
+          print('   🕐 Set timestamp: $mTime');
         } catch (e) {
-            print('   ⚠️  Could not set timestamp: $e');
+          print('   ⚠️  Could not set timestamp: $e');
         }
-        }
+      }
 
-        print('✅ Downloaded: $localPath');
-        return;
+      print('✅ Downloaded: $localPath');
+      return;
     }
 
     if (itemInfo['type'] == 'folder') {
-        if (!recursive) {
-        throw Exception("'$remotePath' is a folder. Use -r for recursive download.");
-        }
+      if (!recursive) {
+        throw Exception(
+            "'$remotePath' is a folder. Use -r for recursive download.");
+      }
 
-        String baseDestPath;
-        if (localDestination != null) {
+      String baseDestPath;
+      if (localDestination != null) {
         baseDestPath = localDestination;
-        } else {
+      } else {
         final folderName = itemInfo['metadata']?['name'] ?? 'download';
         baseDestPath = folderName;
-        }
-        
-        final baseDestDir = Directory(baseDestPath);
-        await baseDestDir.create(recursive: true);
+      }
 
-        print('📂 Downloading folder: $remotePath');
-        print('💾 Target: ${baseDestDir.path}');
+      final baseDestDir = Directory(baseDestPath);
+      await baseDestDir.create(recursive: true);
 
-        Map<String, dynamic> batchState;
-        List<dynamic> tasks;
+      print('📂 Downloading folder: $remotePath');
+      print('💾 Target: ${baseDestDir.path}');
 
-        if (initialBatchState != null) {
+      Map<String, dynamic> batchState;
+      List<dynamic> tasks;
+
+      if (initialBatchState != null) {
         print("🔄 Resuming batch...");
         batchState = initialBatchState;
         tasks = batchState['tasks'] as List<dynamic>;
-        } else {
+      } else {
         print("🔍 Building task list...");
         tasks = [];
-        
-        Future<void> buildTasks(String currentUuid, String currentRelPath) async {
-            final files = await listFolderFiles(currentUuid, detailed: true);
-            final folders = await listFoldersAsync(currentUuid, detailed: true);
 
-            for (var fileInfo in files) {
+        Future<void> buildTasks(
+            String currentUuid, String currentRelPath) async {
+          final files = await listFolderFiles(currentUuid, detailed: true);
+          final folders = await listFoldersAsync(currentUuid, detailed: true);
+
+          for (var fileInfo in files) {
             final filename = fileInfo['name'] ?? 'file';
-            final localFilePath = p.join(baseDestPath, currentRelPath, filename);
+            final localFilePath =
+                p.join(baseDestPath, currentRelPath, filename);
 
             if (shouldIncludeFile(filename, include, exclude)) {
-                tasks.add({
+              tasks.add({
                 'remoteUuid': fileInfo['uuid'],
                 'localPath': localFilePath,
                 'status': 'pending',
-                'remoteModificationTime': fileInfo['lastModified'] ?? fileInfo['timestamp'],
-                });
+                'remoteModificationTime':
+                    fileInfo['lastModified'] ?? fileInfo['timestamp'],
+              });
             }
-            }
+          }
 
-            for (var folderInfo in folders) {
+          for (var folderInfo in folders) {
             final folderName = folderInfo['name'] ?? 'subfolder';
             final nextRelPath = p.join(currentRelPath, folderName);
             final localSubDir = Directory(p.join(baseDestPath, nextRelPath));
             await localSubDir.create(recursive: true);
 
             await buildTasks(folderInfo['uuid'], nextRelPath);
-            }
+          }
         }
 
         await buildTasks(itemInfo['uuid'], '');
-        
+
         batchState = {
-            'operationType': 'download',
-            'remotePath': remotePath,
-            'localDestination': baseDestPath,
-            'tasks': tasks,
+          'operationType': 'download',
+          'remotePath': remotePath,
+          'localDestination': baseDestPath,
+          'tasks': tasks,
         };
         await saveStateCallback(batchState);
         print("📝 Task list: ${tasks.length} files");
-        }
+      }
 
-        int successCount = 0;
-        int skippedCount = 0;
-        int errorCount = 0;
-        int completedPreviously = 0;
+      int successCount = 0;
+      int skippedCount = 0;
+      int errorCount = 0;
+      int completedPreviously = 0;
 
-        for (int i = 0; i < tasks.length; i++) {
+      for (int i = 0; i < tasks.length; i++) {
         final task = tasks[i] as Map<String, dynamic>;
         final remoteUuid = task['remoteUuid'] as String;
         final localPath = task['localPath'] as String;
@@ -2190,109 +2684,169 @@ class FilenClient {
         final remoteModTime = task['remoteModificationTime'];
 
         if (status == 'completed') {
-            completedPreviously++;
-            continue;
+          completedPreviously++;
+          continue;
         }
         if (status.startsWith('skipped')) {
-            skippedCount++;
-            continue;
+          skippedCount++;
+          continue;
         }
 
         final localFile = File(localPath);
-        
+
         // Handle conflict
         if (await localFile.exists()) {
-            if (onConflict == 'skip') {
+          if (onConflict == 'skip') {
             print('⏭️  Skipping: ${p.basename(localPath)} (exists)');
             skippedCount++;
             task['status'] = 'skipped_conflict';
             await saveStateCallback(batchState);
             continue;
-            } else if (onConflict == 'newer') {
+          } else if (onConflict == 'newer') {
             if (remoteModTime != null) {
-                final localStat = await localFile.stat();
-                final localModTime = localStat.modified;
-                
-                DateTime remoteDateTime;
-                if (remoteModTime is int) {
-                remoteDateTime = DateTime.fromMillisecondsSinceEpoch(remoteModTime);
-                } else {
+              final localStat = await localFile.stat();
+              final localModTime = localStat.modified;
+
+              DateTime remoteDateTime;
+              if (remoteModTime is int) {
+                remoteDateTime =
+                    DateTime.fromMillisecondsSinceEpoch(remoteModTime);
+              } else {
                 remoteDateTime = DateTime.parse(remoteModTime.toString());
-                }
-                
-                if (!remoteDateTime.isAfter(localModTime)) {
-                print('⏭️  Skipping: ${p.basename(localPath)} (local is newer)');
+              }
+
+              if (!remoteDateTime.isAfter(localModTime)) {
+                print(
+                    '⏭️  Skipping: ${p.basename(localPath)} (local is newer)');
                 skippedCount++;
                 task['status'] = 'skipped_newer';
                 await saveStateCallback(batchState);
                 continue;
-                }
-                print('📥 Downloading: ${p.basename(localPath)} (remote is newer)');
+              }
+              print(
+                  '📥 Downloading: ${p.basename(localPath)} (remote is newer)');
             } else {
-                print('⚠️  Skipping: ${p.basename(localPath)} (cannot compare timestamps)');
-                skippedCount++;
-                task['status'] = 'skipped_no_timestamp';
-                await saveStateCallback(batchState);
-                continue;
+              print(
+                  '⚠️  Skipping: ${p.basename(localPath)} (cannot compare timestamps)');
+              skippedCount++;
+              task['status'] = 'skipped_no_timestamp';
+              await saveStateCallback(batchState);
+              continue;
             }
-            }
-            // onConflict == 'overwrite' - just proceed
+          }
+          // onConflict == 'overwrite' - just proceed
         }
 
         try {
-            if (onConflict != 'newer') {
+          if (onConflict != 'newer') {
             print('📥 Downloading: ${p.basename(localPath)}');
-            }
-            
-            final result = await downloadFile(remoteUuid, savePath: localPath);
+          }
 
-            final modTime = result['modificationTime'] ?? remoteModTime;
-            if (preserveTimestamps && modTime != null) {
+          final result = await downloadFile(remoteUuid, savePath: localPath);
+
+          final modTime = result['modificationTime'] ?? remoteModTime;
+          if (preserveTimestamps && modTime != null) {
             try {
-                DateTime mTime;
-                if (modTime is int) {
+              DateTime mTime;
+              if (modTime is int) {
                 mTime = DateTime.fromMillisecondsSinceEpoch(modTime);
-                } else {
+              } else {
                 mTime = DateTime.parse(modTime.toString());
-                }
-                await localFile.setLastModified(mTime);
+              }
+              await localFile.setLastModified(mTime);
             } catch (e) {
-                _log('Could not set timestamp: $e');
+              _log('Could not set timestamp: $e');
             }
-            }
-            
-            successCount++;
-            task['status'] = 'completed';
+          }
+
+          successCount++;
+          task['status'] = 'completed';
         } catch (e) {
-            print('❌ Download error: $e');
-            errorCount++;
-            task['status'] = 'error_download';
+          print('❌ Download error: $e');
+          errorCount++;
+          task['status'] = 'error_download';
         }
-        
+
         await saveStateCallback(batchState);
-        }
+      }
 
-        print("=" * 40);
-        print("📊 Download Summary:");
-        if (completedPreviously > 0) print("  ✅ Previous: $completedPreviously");
-        print("  ✅ Downloaded: $successCount");
-        print("  ⏭️  Skipped: $skippedCount");
-        print("  ❌ Errors: $errorCount");
-        print("=" * 40);
+      print("=" * 40);
+      print("📊 Download Summary:");
+      if (completedPreviously > 0) print("  ✅ Previous: $completedPreviously");
+      print("  ✅ Downloaded: $successCount");
+      print("  ⏭️  Skipped: $skippedCount");
+      print("  ❌ Errors: $errorCount");
+      print("=" * 40);
 
-        if (errorCount > 0) {
+      if (errorCount > 0) {
         throw Exception("Download completed with $errorCount errors");
-        }
+      }
     }
-    }
+  }
 
   // --- Trash Operations ---
 
   Future<List<Map<String, dynamic>>> getTrashContent() async {
-    // Filen doesn't have a direct trash API endpoint
-    // This is a placeholder - would need proper implementation
-    _log('Trash listing not fully implemented yet');
-    return [];
+    // API Doc: POST /dir/content with uuid: "trash"
+    final response =
+        await _post('/v3/dir/content', {'uuid': 'trash', 'foldersOnly': false});
+
+    final data = response['data'];
+    final List<dynamic> rawFolders = data['folders'] ?? [];
+    final List<dynamic> rawUploads = data['uploads'] ?? [];
+
+    List<Map<String, dynamic>> results = [];
+
+    // Process Folders
+    for (var f in rawFolders) {
+      String name = 'Unknown';
+      try {
+        // Folders have 'name' field which is encrypted
+        var dec = await _tryDecrypt(f['name']);
+        name = dec.startsWith('{') ? json.decode(dec)['name'] : dec;
+      } catch (_) {
+        name = '[Encrypted]';
+      }
+
+      results.add({
+        'type': 'folder',
+        'name': name,
+        'uuid': f['uuid'],
+        'size': 0, // Folders don't usually return size in this view
+        'parent': f['parent'],
+        'timestamp': f['timestamp'],
+        'lastModified': f['lastModified'] ?? 0,
+      });
+    }
+
+    // Process Files
+    for (var f in rawUploads) {
+      String name = 'Unknown';
+      int size = 0;
+      int lastModified = 0;
+
+      try {
+        // Files have 'metadata' field which is encrypted
+        final m = json.decode(await _tryDecrypt(f['metadata']));
+        name = m['name'];
+        size = m['size'] ?? 0;
+        lastModified = m['lastModified'] ?? 0;
+      } catch (_) {
+        name = '[Encrypted]';
+      }
+
+      results.add({
+        'type': 'file',
+        'name': name,
+        'uuid': f['uuid'],
+        'size': size,
+        'parent': f['parent'],
+        'timestamp': f['timestamp'],
+        'lastModified': lastModified,
+      });
+    }
+
+    return results;
   }
 
   // --- Search & Find ---
@@ -2761,17 +3315,44 @@ class ConfigService {
   late final String configDir;
   late final String credentialsFile;
   late final String batchStateDir;
+  late final String webdavPidFile; // ADD THIS
 
   ConfigService({required String configPath}) {
     configDir = configPath;
     credentialsFile = p.join(configDir, 'credentials.json');
     batchStateDir = p.join(configDir, 'batch_states');
+    webdavPidFile = p.join(configDir, 'webdav.pid'); // ADD THIS
 
     try {
       Directory(configDir).createSync(recursive: true);
       Directory(batchStateDir).createSync(recursive: true);
     } catch (e) {
       print("⚠️ Warning: Could not create config directory: $e");
+    }
+  }
+
+  Future<int?> readWebdavPid() async {
+    final file = File(webdavPidFile);
+    if (await file.exists()) {
+      try {
+        final content = await file.readAsString();
+        return int.tryParse(content.trim());
+      } catch (_) {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  Future<void> saveWebdavPid(int pid) async {
+    final file = File(webdavPidFile);
+    await file.writeAsString(pid.toString());
+  }
+
+  Future<void> clearWebdavPid() async {
+    final file = File(webdavPidFile);
+    if (await file.exists()) {
+      await file.delete();
     }
   }
 
