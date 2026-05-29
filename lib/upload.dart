@@ -16,6 +16,7 @@ import 'package:filen_dart/api.dart';
 import 'package:filen_dart/cache.dart';
 import 'package:filen_dart/crypto.dart';
 import 'package:filen_dart/drive.dart';
+import 'package:filen_dart/memory_gate.dart';
 import 'package:filen_dart/utils.dart';
 
 /// Exception for chunk upload failures (carries resume state).
@@ -44,13 +45,15 @@ class FilenUpload {
   final FilenCrypto crypto;
   final FilenCache cache;
   final FilenDrive drive;
+  final MemoryGate memoryGate;
 
   FilenUpload({
     required this.api,
     required this.crypto,
     required this.cache,
     required this.drive,
-  });
+    MemoryGate? memoryGate,
+  }) : memoryGate = memoryGate ?? MemoryGate();
 
   List<String> get masterKeys => drive.masterKeys;
   String get email => drive.email;
@@ -400,6 +403,9 @@ class FilenUpload {
 
       if (!shouldUpload) continue;
 
+      final fileSize = await localFile.length();
+      await memoryGate.acquire(fileSize);
+
       try {
         String? cTime, mTime;
         if (preserveTimestamps) {
@@ -439,6 +445,8 @@ class FilenUpload {
         if (api.debugMode) print("\n❌ Upload error: $e");
         errorCount++;
         task['status'] = 'interrupted';
+      } finally {
+        memoryGate.release(fileSize);
       }
 
       await saveStateCallback(batchState);

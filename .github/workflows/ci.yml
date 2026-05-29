@@ -33,6 +33,8 @@ jobs:
             --in=coverage \
             --out=coverage/lcov.info \
             --report-on=lib
+      - name: Check per-file coverage thresholds
+        run: dart run tool/check_coverage.dart coverage/lcov.info
 
   compile:
     runs-on: ubuntu-latest
