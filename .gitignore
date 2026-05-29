@@ -24,3 +24,9 @@ credentials.json
 
 # Logs
 *.log
+
+# Coverage
+coverage/
+
+# pubspec.lock (library convention)
+pubspec.lock
