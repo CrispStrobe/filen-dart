@@ -52,19 +52,26 @@ class FilenDownload {
     for (var i = startChunk; i <= endChunk && i < chunks; i++) {
       final r = await api.client
           .get(Uri.parse('$host/${d['region']}/${d['bucket']}/$uuid/$i'));
-      if (r.statusCode != 200) throw Exception('Chunk download failed');
-
-      final decrypted = await crypto.decryptData(r.bodyBytes, keyBytes);
-
-      if (i == startChunk && rangeStart != null) {
-        final offset = rangeStart % chunkSize;
-        buffer.add(decrypted.sublist(offset));
-      } else if (i == endChunk && rangeEnd != null) {
-        final endOffset = rangeEnd % chunkSize + 1;
-        buffer.add(decrypted.sublist(0, endOffset));
-      } else {
-        buffer.add(decrypted);
+      if (r.statusCode != 200) {
+        throw Exception('Chunk download failed: ${r.statusCode}');
       }
+
+      var chunkBytes = await crypto.decryptData(r.bodyBytes, keyBytes);
+
+      // Trim the tail of the last chunk, then the head of the first chunk.
+      // Trimming end-before-start keeps both offsets relative to the chunk
+      // start — required when the whole range lies within a single chunk
+      // (start == end), where the previous if/else only trimmed the head.
+      if (i == endChunk && rangeEnd != null) {
+        final endOffset = rangeEnd % chunkSize + 1;
+        if (endOffset < chunkBytes.length) {
+          chunkBytes = chunkBytes.sublist(0, endOffset);
+        }
+      }
+      if (i == startChunk && rangeStart != null) {
+        chunkBytes = chunkBytes.sublist(rangeStart % chunkSize);
+      }
+      buffer.add(chunkBytes);
     }
 
     return buffer.toBytes();
@@ -92,7 +99,9 @@ class FilenDownload {
     for (var i = 0; i < chunks; i++) {
       final r = await api.client
           .get(Uri.parse('$host/${d['region']}/${d['bucket']}/$uuid/$i'));
-      if (r.statusCode != 200) throw Exception('Chunk download failed');
+      if (r.statusCode != 200) {
+        throw Exception('Chunk download failed: ${r.statusCode}');
+      }
 
       final decrypted = await crypto.decryptData(r.bodyBytes, keyBytes);
       buffer.add(decrypted);
@@ -138,7 +147,10 @@ class FilenDownload {
     for (var i = 0; i < chunks; i++) {
       final r = await api.client
           .get(Uri.parse('$host/${d['region']}/${d['bucket']}/$uuid/$i'));
-      if (r.statusCode != 200) throw Exception('Chunk fail');
+      if (r.statusCode != 200) {
+        await sink.close();
+        throw Exception('Chunk download failed: ${r.statusCode}');
+      }
 
       final decrypted = await crypto.decryptData(r.bodyBytes, keyBytes);
       sink.add(decrypted);

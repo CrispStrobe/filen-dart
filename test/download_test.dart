@@ -21,6 +21,17 @@ void main() {
     crypto = FilenCrypto(random: Random(42));
   });
 
+  // Wires up a downloader against a mock HTTP client with the test master key.
+  FilenDownload buildDownloader(MockClient mockClient) {
+    final api = FilenApi(client: mockClient)..apiKey = 'test-key';
+    final cache = FilenCache();
+    final drive = FilenDrive(api: api, crypto: crypto, cache: cache)
+      ..baseFolderUUID = 'root'
+      ..masterKeys = [masterKey]
+      ..email = 'test@example.com';
+    return FilenDownload(api: api, crypto: crypto, cache: cache, drive: drive);
+  }
+
   group('FilenDownload', () {
     test('downloadFileBytes decrypts and returns bytes', () async {
       // 1. Encrypt test data with known key
@@ -209,6 +220,176 @@ void main() {
         final f = File(savePath);
         if (f.existsSync()) f.deleteSync();
       }
+    });
+
+    test('concatenates and decrypts multiple chunks in order', () async {
+      const fileKey = 'abcdefghijklmnopqrstuvwxyz123456';
+      final fileKeyBytes = Uint8List.fromList(utf8.encode(fileKey));
+      final p0 = Uint8List.fromList(utf8.encode('AAAA'));
+      final p1 = Uint8List.fromList(utf8.encode('BBBBBB'));
+      final p2 = Uint8List.fromList(utf8.encode('CC'));
+      final chunkCipher = [
+        await crypto.encryptData(p0, fileKeyBytes),
+        await crypto.encryptData(p1, fileKeyBytes),
+        await crypto.encryptData(p2, fileKeyBytes),
+      ];
+      final encMeta = await crypto.encryptMetadata002(
+          json.encode({
+            'name': 'multi.bin',
+            'size': p0.length + p1.length + p2.length,
+            'key': fileKey,
+          }),
+          masterKey);
+
+      final calls = <String>[];
+      final mockClient = MockClient((request) async {
+        final url = request.url.toString();
+        calls.add(url);
+        if (url.contains('/v3/file')) {
+          return http.Response(
+              json.encode({
+                'status': true,
+                'data': {
+                  'metadata': encMeta,
+                  'chunks': 3,
+                  'region': 'eu',
+                  'bucket': 'b1'
+                }
+              }),
+              200);
+        }
+        if (url.contains('egest.filen.io')) {
+          return http.Response.bytes(
+              chunkCipher[int.parse(url.split('/').last)], 200);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      final result =
+          await buildDownloader(mockClient).downloadFileBytes('file-uuid-123');
+      expect(result, equals(Uint8List.fromList([...p0, ...p1, ...p2])));
+
+      // /v3/file is fetched first, then each egest chunk URL in index order.
+      expect(calls.first, contains('/v3/file'));
+      final egest = calls.where((u) => u.contains('egest')).toList();
+      expect(egest.length, equals(3));
+      expect(egest[0], equals('https://egest.filen.io/eu/b1/file-uuid-123/0'));
+      expect(egest[1], endsWith('/1'));
+      expect(egest[2], endsWith('/2'));
+    });
+
+    test('reports monotonic progress ending at the total size', () async {
+      const fileKey = 'abcdefghijklmnopqrstuvwxyz123456';
+      final fileKeyBytes = Uint8List.fromList(utf8.encode(fileKey));
+      final parts = [
+        Uint8List.fromList(utf8.encode('one')),
+        Uint8List.fromList(utf8.encode('twotwo')),
+      ];
+      final total = parts.fold<int>(0, (a, b) => a + b.length);
+      final chunkCipher = [
+        await crypto.encryptData(parts[0], fileKeyBytes),
+        await crypto.encryptData(parts[1], fileKeyBytes),
+      ];
+      final encMeta = await crypto.encryptMetadata002(
+          json.encode({'name': 'p.bin', 'size': total, 'key': fileKey}),
+          masterKey);
+      final mockClient = MockClient((request) async {
+        final url = request.url.toString();
+        if (url.contains('/v3/file')) {
+          return http.Response(
+              json.encode({
+                'status': true,
+                'data': {
+                  'metadata': encMeta,
+                  'chunks': 2,
+                  'region': 'eu',
+                  'bucket': 'b1'
+                }
+              }),
+              200);
+        }
+        if (url.contains('egest.filen.io')) {
+          return http.Response.bytes(
+              chunkCipher[int.parse(url.split('/').last)], 200);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      final progress = <List<int>>[];
+      await buildDownloader(mockClient).downloadFileBytes('file-uuid-123',
+          onProgress: (d, t) => progress.add([d, t]));
+
+      expect(progress.length, equals(2)); // one callback per chunk
+      expect(progress.last[0], equals(total)); // decrypted bytes total
+      expect(progress.last[1], equals(total)); // == size from metadata
+      for (var i = 1; i < progress.length; i++) {
+        expect(progress[i][0], greaterThanOrEqualTo(progress[i - 1][0]));
+      }
+    });
+
+    test('throws with the HTTP status when a chunk download fails', () async {
+      const fileKey = 'abcdefghijklmnopqrstuvwxyz123456';
+      final encMeta = await crypto.encryptMetadata002(
+          json.encode({'name': 'x', 'size': 10, 'key': fileKey}), masterKey);
+      final mockClient = MockClient((request) async {
+        final url = request.url.toString();
+        if (url.contains('/v3/file')) {
+          return http.Response(
+              json.encode({
+                'status': true,
+                'data': {
+                  'metadata': encMeta,
+                  'chunks': 1,
+                  'region': 'eu',
+                  'bucket': 'b1'
+                }
+              }),
+              200);
+        }
+        if (url.contains('egest.filen.io')) return http.Response('', 503);
+        return http.Response('Not found', 404);
+      });
+
+      await expectLater(
+        () => buildDownloader(mockClient).downloadFileBytes('file-uuid-123'),
+        throwsA(isA<Exception>()
+            .having((e) => e.toString(), 'message', contains('503'))),
+      );
+    });
+
+    test('downloadFileRange trims both ends within a single chunk', () async {
+      const fileKey = 'abcdefghijklmnopqrstuvwxyz123456';
+      final fileKeyBytes = Uint8List.fromList(utf8.encode(fileKey));
+      final plain = Uint8List.fromList(List.generate(500, (i) => i % 256));
+      final cipher = await crypto.encryptData(plain, fileKeyBytes);
+      final encMeta = await crypto.encryptMetadata002(
+          json.encode({'name': 'r.bin', 'size': 500, 'key': fileKey}),
+          masterKey);
+      final mockClient = MockClient((request) async {
+        final url = request.url.toString();
+        if (url.contains('/v3/file')) {
+          return http.Response(
+              json.encode({
+                'status': true,
+                'data': {
+                  'metadata': encMeta,
+                  'chunks': 1,
+                  'region': 'eu',
+                  'bucket': 'b1'
+                }
+              }),
+              200);
+        }
+        if (url.contains('egest.filen.io')) {
+          return http.Response.bytes(cipher, 200);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      final out = await buildDownloader(mockClient)
+          .downloadFileRange('file-uuid-123', rangeStart: 100, rangeEnd: 200);
+      // Inclusive range [100, 200] within one chunk -> 101 bytes.
+      expect(out, equals(plain.sublist(100, 201)));
     });
   });
 }
