@@ -128,6 +128,19 @@ class FilenFileSink implements io.IOSink {
         throw io.FileSystemException('Invalid parent path', remoteParentPath);
       }
 
+      // Overwrite semantics: Filen permits duplicate names, so an
+      // unconditional upload over an existing path would create a sibling
+      // rather than replace it. Trash any existing file at this path first
+      // (mirrors filen-python's end_write) so a PUT replaces it.
+      try {
+        final existing = await client.resolvePath(remotePath);
+        if (existing['type'] == 'file') {
+          await client.trashItem(existing['uuid'], 'file');
+        }
+      } catch (_) {
+        // No existing entry at this path -> nothing to replace.
+      }
+
       final io.File localFileToUpload; // Non-nullable declaration
 
       if (_usingDisk) {
