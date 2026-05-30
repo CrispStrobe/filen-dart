@@ -1,36 +1,26 @@
 @Tags(['live'])
-import 'dart:io';
-
 import 'package:test/test.dart';
 import 'package:filen_dart/filen_client.dart';
 import 'package:filen_dart/webdav_filesystem.dart';
 
-/// Live WebDAV integration tests against real Filen backend.
-/// Requires FILEN_EMAIL and FILEN_PASSWORD environment variables.
+import 'live_support.dart';
+
+/// Live WebDAV integration tests against the real Filen backend.
+/// Authenticates via FILEN_EMAIL/FILEN_PASSWORD, or falls back to a saved CLI
+/// session (~/.filen-cli/credentials.json or FILEN_CREDENTIALS).
 ///
 /// Run with: dart test --tags live test/webdav_live_test.dart
 void main() {
-  final email = Platform.environment['FILEN_EMAIL'];
-  final password = Platform.environment['FILEN_PASSWORD'];
-
-  if (email == null || password == null) {
-    test('SKIPPED: FILEN_EMAIL and FILEN_PASSWORD not set', () {},
-        skip: 'Set FILEN_EMAIL and FILEN_PASSWORD to run live tests');
+  if (!liveCredentialsAvailable()) {
+    test('SKIPPED: no live credentials', () {},
+        skip: 'Set FILEN_EMAIL/FILEN_PASSWORD or provide a saved CLI session');
     return;
   }
 
   late FilenClient client;
 
   setUpAll(() async {
-    final tempDir = Directory.systemTemp.createTempSync('filen_webdav_test_');
-    final config = ConfigService(configPath: tempDir.path);
-    client = FilenClient(config: config);
-
-    final credentials = await client.login(email, password);
-    client.setAuth(credentials);
-    final rootUUID = await client.fetchBaseFolderUUID();
-    credentials['baseFolderUUID'] = rootUUID;
-    client.setAuth(credentials);
+    client = await authenticateForLiveTest();
   });
 
   tearDownAll(() async {

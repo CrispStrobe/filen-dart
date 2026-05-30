@@ -4,36 +4,27 @@ import 'dart:io';
 import 'package:test/test.dart';
 import 'package:filen_dart/filen_client.dart';
 
-/// Live integration tests against real Filen backend.
-/// Requires FILEN_EMAIL and FILEN_PASSWORD environment variables.
+import 'live_support.dart';
+
+/// Live integration tests against the real Filen backend.
+/// Authenticates via FILEN_EMAIL/FILEN_PASSWORD, or falls back to a saved CLI
+/// session (~/.filen-cli/credentials.json or FILEN_CREDENTIALS).
 /// All operations are confined to a test folder and cleaned up on teardown.
 ///
 /// Run with: dart test --tags live
 void main() {
-  final email = Platform.environment['FILEN_EMAIL'];
-  final password = Platform.environment['FILEN_PASSWORD'];
-
-  if (email == null || password == null) {
-    test('SKIPPED: FILEN_EMAIL and FILEN_PASSWORD not set', () {
+  if (!liveCredentialsAvailable()) {
+    test('SKIPPED: no live credentials', () {
       // This test exists so the file doesn't fail when credentials aren't set
-    }, skip: 'Set FILEN_EMAIL and FILEN_PASSWORD to run live tests');
+    }, skip: 'Set FILEN_EMAIL/FILEN_PASSWORD or provide a saved CLI session');
     return;
   }
 
   late FilenClient client;
-  late ConfigService config;
   late String testFolderPath;
 
   setUpAll(() async {
-    final tempDir = Directory.systemTemp.createTempSync('filen_live_test_');
-    config = ConfigService(configPath: tempDir.path);
-    client = FilenClient(config: config);
-
-    final credentials = await client.login(email, password);
-    client.setAuth(credentials);
-    final rootUUID = await client.fetchBaseFolderUUID();
-    credentials['baseFolderUUID'] = rootUUID;
-    client.setAuth(credentials);
+    client = await authenticateForLiveTest();
 
     // Create a unique test folder
     final timestamp = DateTime.now().millisecondsSinceEpoch;
