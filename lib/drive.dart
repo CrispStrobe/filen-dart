@@ -586,15 +586,20 @@ class FilenDrive {
       return p.join(startPath, parts.reversed.join('/'));
     }
 
-    // Simple glob matching
-    final globRegex = RegExp(
-        '^' +
-            pattern
-                .replaceAll('.', r'\.')
-                .replaceAll('*', '.*')
-                .replaceAll('?', '.') +
-            r'$',
-        caseSensitive: false);
+    // Glob matching: translate `*`/`?` and escape every other character so
+    // regex metacharacters in the pattern are matched literally.
+    final globBuf = StringBuffer('^');
+    for (final ch in pattern.split('')) {
+      if (ch == '*') {
+        globBuf.write('.*');
+      } else if (ch == '?') {
+        globBuf.write('.');
+      } else {
+        globBuf.write(RegExp.escape(ch));
+      }
+    }
+    globBuf.write(r'$');
+    final globRegex = RegExp(globBuf.toString(), caseSensitive: false);
 
     for (var f in rawFiles) {
       try {
