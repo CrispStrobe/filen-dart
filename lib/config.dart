@@ -30,6 +30,9 @@ class ConfigService {
     }
   }
 
+  /// The active credential storage backend (FileConfigStorage by default).
+  ConfigStorage get storage => _storage;
+
   // --- Credential management (delegated to ConfigStorage) ---
 
   Future<void> saveCredentials(Map<String, dynamic> data) =>

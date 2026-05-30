@@ -43,7 +43,11 @@ class FilenApi {
     int maxRetries = 3,
     int retryCount = 0,
   }) async {
-    final requestHeaders = headers ?? {'Content-Type': 'application/json'};
+    // Clone so the Authorization injection never mutates the caller's map
+    // (it would otherwise leak a stale bearer token across reuses/retries).
+    final requestHeaders = headers != null
+        ? Map<String, String>.from(headers)
+        : <String, String>{'Content-Type': 'application/json'};
     if (useAuth && apiKey != null && apiKey!.isNotEmpty) {
       requestHeaders['Authorization'] = 'Bearer $apiKey';
     }

@@ -26,7 +26,13 @@ class FileConfigStorage implements ConfigStorage {
   Future<Map<String, dynamic>?> readCredentials() async {
     final file = File(credentialsFile);
     if (await file.exists()) {
-      return json.decode(await file.readAsString());
+      try {
+        return json.decode(await file.readAsString()) as Map<String, dynamic>;
+      } catch (_) {
+        // Corrupt/unreadable credentials file -> treat as "not logged in"
+        // rather than crashing the CLI.
+        return null;
+      }
     }
     return null;
   }
