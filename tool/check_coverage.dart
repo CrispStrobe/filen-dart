@@ -10,22 +10,26 @@ import 'dart:io';
 
 /// Per-file coverage thresholds (percentage).
 /// Files not listed here get a default threshold.
+// Ratcheted to lock in current coverage, with a little headroom below the
+// measured value so normal churn doesn't flake the gate. `cli.dart` is almost
+// entirely live network handlers / command dispatch that can't be unit-tested,
+// so it carries a 0 floor (its logic is covered indirectly + via planMove).
 const thresholds = <String, int>{
-  'lib/crypto.dart': 90,
+  'lib/crypto.dart': 95,
   'lib/utils.dart': 100,
-  'lib/config.dart': 85,
-  'lib/config_storage.dart': 90,
+  'lib/config.dart': 90,
+  'lib/config_storage.dart': 95,
   'lib/cache.dart': 80,
   'lib/memory_gate.dart': 70,
-  'lib/api.dart': 30,
-  'lib/auth.dart': 30,
-  'lib/drive.dart': 20,
-  'lib/upload.dart': 15,
-  'lib/download.dart': 15,
+  'lib/api.dart': 80,
+  'lib/auth.dart': 90,
+  'lib/drive.dart': 55,
+  'lib/upload.dart': 25,
+  'lib/download.dart': 30,
   'lib/filen_client.dart': 30,
-  'lib/cli.dart': 5,
-  'lib/paths.dart': 10,
-  'lib/webdav_filesystem.dart': 5,
+  'lib/cli.dart': 0,
+  'lib/paths.dart': 30,
+  'lib/webdav_filesystem.dart': 25,
 };
 
 const defaultThreshold = 10;
@@ -101,11 +105,8 @@ void main(List<String> args) {
 
   print('');
   if (failed) {
-    // Warn-only: report files below their threshold but do not fail CI.
-    // Thresholds are aspirational targets; tighten them (or add tests) over
-    // time, then flip this back to `exit(1)` to enforce them.
-    stderr.writeln(
-        'WARNING: Some files are below their coverage threshold (gate is warn-only).');
+    stderr.writeln('FAILED: Some files are below their coverage threshold.');
+    exit(1);
   } else {
     print('PASSED: All files meet their coverage thresholds.');
   }
