@@ -621,25 +621,41 @@ class FilenCLI {
     }
   }
 
+  /// Pure move/rename decision (no I/O).
+  ///
+  /// When the destination is an existing folder the item keeps its own name
+  /// (a plain move); otherwise the destination's basename becomes the new
+  /// name (a move-and-rename).
+  static ({String destName, bool isRename}) planMove({
+    required String srcPath,
+    required String destPath,
+    required bool destIsExistingFolder,
+  }) =>
+      destIsExistingFolder
+          ? (destName: p.basename(srcPath), isRename: false)
+          : (destName: p.basename(destPath), isRename: true);
+
   Future<void> handleMove(String srcPath, String destPath) async {
     await _prepareClient();
     final src = await client.resolvePath(srcPath);
 
     Map<String, dynamic>? destParent;
-    String? destName;
-    bool isRename = false;
+    String destName;
+    bool isRename;
 
     try {
       final destObj = await client.resolvePath(destPath);
       if (destObj['type'] == 'folder') {
         destParent = destObj;
-        destName = p.basename(srcPath);
       } else {
         _exit('Destination exists as a file.');
       }
+      final plan = planMove(
+          srcPath: srcPath, destPath: destPath, destIsExistingFolder: true);
+      destName = plan.destName;
+      isRename = plan.isRename;
     } catch (_) {
       final parentDir = p.dirname(destPath);
-      destName = p.basename(destPath);
       try {
         destParent =
             await client.resolvePath(parentDir == '.' ? '/' : parentDir);
@@ -647,7 +663,10 @@ class FilenCLI {
       } catch (e) {
         _exit('Destination parent not found.');
       }
-      isRename = true;
+      final plan = planMove(
+          srcPath: srcPath, destPath: destPath, destIsExistingFolder: false);
+      destName = plan.destName;
+      isRename = plan.isRename;
     }
 
     print(

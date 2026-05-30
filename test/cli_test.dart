@@ -1,4 +1,5 @@
 import 'package:test/test.dart';
+import 'package:filen_dart/cli.dart';
 import 'package:filen_dart/filen_client.dart';
 
 void main() {
@@ -156,6 +157,27 @@ void main() {
       // Should be equal but not identical (defensive copies)
       expect(read1, equals(read2));
       expect(identical(read1, read2), isFalse);
+    });
+  });
+
+  group('FilenCLI.planMove', () {
+    test('moving into an existing folder keeps the source name', () {
+      final plan = FilenCLI.planMove(
+          srcPath: '/Docs/a.txt',
+          destPath: '/Archive',
+          destIsExistingFolder: true);
+      expect(plan.destName, equals('a.txt'));
+      expect(plan.isRename, isFalse);
+    });
+
+    test('moving to a non-existent path renames to the destination basename',
+        () {
+      final plan = FilenCLI.planMove(
+          srcPath: '/Docs/a.txt',
+          destPath: '/Archive/b.txt',
+          destIsExistingFolder: false);
+      expect(plan.destName, equals('b.txt'));
+      expect(plan.isRename, isTrue);
     });
   });
 }
