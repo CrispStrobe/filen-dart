@@ -785,6 +785,49 @@ rm ~/.filen-cli/webdav.pid
 - **File Size**: Very large files may encounter memory issues
 - **Windows WebDAV**: May require registry tweaks for large files
 
+## 🧪 Development & Testing
+
+The library is split into focused modules under `lib/` (`crypto`, `api`,
+`auth`, `cache`, `drive`, `upload`, `download`, `config`, `paths`,
+`webdav_filesystem`, …) behind the `FilenClient` facade, with a unit test per
+module under `test/`.
+
+**Run the unit tests** (no network, no credentials):
+
+```bash
+dart pub get
+dart analyze --fatal-infos
+dart test --exclude-tags=live
+```
+
+**Coverage** (per-file thresholds in `tool/check_coverage.dart`):
+
+```bash
+dart test --coverage=coverage --exclude-tags=live
+dart pub global activate coverage
+dart pub global run coverage:format_coverage \
+  --lcov --in=coverage --out=coverage/lcov.info --report-on=lib
+dart run tool/check_coverage.dart coverage/lcov.info
+```
+
+**Live tests** run against a real Filen account. They authenticate via
+`FILEN_EMAIL` / `FILEN_PASSWORD`, or fall back to a saved CLI session
+(`~/.filen-cli/credentials.json`, overridable with `FILEN_CREDENTIALS`). They
+are confined to a sentinel folder and clean up on teardown. The `live` tag is
+skipped by default, so force it explicitly:
+
+```bash
+FILEN_EMAIL=you@example.com FILEN_PASSWORD=secret \
+  dart test --tags live --run-skipped
+# or, reusing an existing CLI login:
+dart test --tags live --run-skipped
+```
+
+**CI** (`.github/workflows/ci.yml`) runs on push/PR to `main`: `analyze`
+(`--fatal-infos` + `dart format` check), `test` (unit tests + coverage report),
+and `compile` (binary build + `help` smoke check). Live tests are excluded in
+CI.
+
 ## 📄 License
 
 This project is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**.

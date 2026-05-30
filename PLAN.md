@@ -12,6 +12,22 @@ that cloud-dart consumes instead of embedding its own copy.
 - `LEARNINGS.md` — gotchas + lessons from the Internxt audit
 - `AUDIT_6B.md` — the cloud-dart consumer audit + rewire blueprint
 
+## Update (2026-05-30)
+
+Most of this roadmap has landed. Done: file dedupe (Phase 0), de-Flutter
+(Phase 1 — the core library is pure Dart), the module split + `lib/`
+restructure (Phases 3, 6), and CI (Phase 8). The test build-out (Phase 4)
+and a first pass of the feature-parity/test-quality work (Phase 5) are done
+as of today: the suite was brought to the internxt-dart thoroughness bar
+(**107 → 217 unit tests**, plus green live smoke + WebDAV live runs against a
+real account), with several real bugs fixed along the way — see `HISTORY.md`
+(2026-05-30) and `LEARNINGS.md`.
+
+Still open: deeper feature-parity sweep vs `filen-python` (more of Phase 5),
+the cloud-dart rewire (Phase 7), and porting the WebCrypto + CORS work
+(preserved on the `wip-filen-webcrypto` branch) into the new `lib/` layout.
+The snapshot below is the **original** pre-audit state, kept for context.
+
 ## Status snapshot (initial state, captured pre-audit)
 
 **Repo state:**
