@@ -36,13 +36,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # dart compile targets the host architecture only. We build on the
+        # runners GitHub provides reliably: arm64 macOS (Apple Silicon),
+        # x64 Linux, and x64 Windows. Intel-mac native builds are omitted —
+        # the macos-13 runner queues unreliably and Apple Silicon is the
+        # current default. (Re-add `{os: macos-13, artifact: filen-macos-x64}`
+        # if a native Intel binary becomes a hard requirement.)
         include:
           - os: ubuntu-latest
             artifact: filen-linux-x64
           - os: macos-latest
             artifact: filen-macos-arm64
-          - os: macos-13
-            artifact: filen-macos-x64
           - os: windows-latest
             artifact: filen-windows-x64.exe
     runs-on: ${{ matrix.os }}
@@ -59,7 +63,7 @@ jobs:
           dart compile exe bin/filen.dart -o "dist/${{ matrix.artifact }}"
       - name: Smoke check
         run: "./dist/${{ matrix.artifact }} help"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.artifact }}
           path: dist/${{ matrix.artifact }}
@@ -71,7 +75,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           path: dist
           merge-multiple: true
