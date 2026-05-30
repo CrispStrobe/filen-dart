@@ -65,7 +65,11 @@ class FilenCrypto {
   // --- Key decoding ---
 
   Uint8List decodeUniversalKey(String k) {
-    if (k.length == 32 && k.contains(RegExp(r'[a-zA-Z0-9\-_]'))) {
+    // A 32-character string drawn entirely from the key alphabet is a raw
+    // UTF-8 key (Filen's "32-char key" convention), not base64. Anchor the
+    // match to the whole string — a loose `contains` would treat almost any
+    // 32-char base64 blob as a raw key.
+    if (k.length == 32 && RegExp(r'^[A-Za-z0-9\-_]+$').hasMatch(k)) {
       return Uint8List.fromList(utf8.encode(k));
     }
     try {

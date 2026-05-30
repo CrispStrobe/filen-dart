@@ -40,6 +40,28 @@ void main() {
     test('handles int input', () {
       expect(formatSize(2048), '2.0 KB');
     });
+
+    test('formats sub-KB boundary values', () {
+      expect(formatSize(1), '1.0 B');
+      expect(formatSize(1023), '1023.0 B');
+    });
+
+    test('rounds just-below-MB up to KB at one decimal', () {
+      // 1048575 B = 1023.999... KB -> rounds to 1024.0 KB at one decimal.
+      expect(formatSize(1048575), '1024.0 KB');
+    });
+
+    test('formats GB with fractional precision', () {
+      expect(formatSize(1610612736), '1.5 GB'); // 1.5 * 1024^3
+    });
+
+    test('formats TB tier', () {
+      expect(formatSize(1099511627776), '1.0 TB'); // 1024^4
+    });
+
+    test('clamps above TB to TB units', () {
+      expect(formatSize(1125899906842624), '1024.0 TB'); // 1024^5
+    });
   });
 
   group('formatDate', () {
@@ -107,6 +129,36 @@ void main() {
     test('wildcard ? matches single character', () {
       expect(shouldIncludeFile('test1.txt', ['test?.txt'], []), isTrue);
       expect(shouldIncludeFile('test12.txt', ['test?.txt'], []), isFalse);
+    });
+
+    test('matches any of multiple include patterns', () {
+      expect(shouldIncludeFile('a.jpg', ['*.txt', '*.jpg'], []), isTrue);
+      expect(shouldIncludeFile('a.png', ['*.txt', '*.jpg'], []), isFalse);
+    });
+
+    test('excludes if any of multiple exclude patterns match', () {
+      expect(shouldIncludeFile('a.tmp', [], ['*.log', '*.tmp']), isFalse);
+      expect(shouldIncludeFile('a.txt', [], ['*.log', '*.tmp']), isTrue);
+    });
+
+    test('glob matching is case-insensitive', () {
+      expect(shouldIncludeFile('README.MD', ['*.md'], []), isTrue);
+      expect(shouldIncludeFile('Photo.JPG', [], ['*.jpg']), isFalse);
+    });
+
+    test('literal dot is not a wildcard', () {
+      // '*.txt' must not match a name with no dot before "txt".
+      expect(shouldIncludeFile('axtxt', ['*.txt'], []), isFalse);
+    });
+
+    test('regex metacharacters in pattern are matched literally', () {
+      // These patterns contain regex specials (+, (), [], $) that must not be
+      // interpreted — they should match only the literal characters.
+      expect(shouldIncludeFile('a+b.txt', ['a+b.txt'], []), isTrue);
+      expect(shouldIncludeFile('aaab.txt', ['a+b.txt'], []), isFalse);
+      expect(shouldIncludeFile('file(1).log', ['file(1).*'], []), isTrue);
+      expect(shouldIncludeFile('data[0].bin', ['data[0].bin'], []), isTrue);
+      expect(shouldIncludeFile('price\$.csv', [r'price$.csv'], []), isTrue);
     });
   });
 }

@@ -65,12 +65,19 @@ bool shouldIncludeFile(
 }
 
 bool _globMatches(String pattern, String input) {
-  // Simple glob matching using RegExp conversion
-  final regexStr = '^' +
-      pattern
-          .replaceAll('.', r'\.')
-          .replaceAll('*', '.*')
-          .replaceAll('?', '.') +
-      r'$';
-  return RegExp(regexStr, caseSensitive: false).hasMatch(input);
+  // Glob -> RegExp. Translate the wildcards `*` and `?`, and escape every
+  // other character so regex metacharacters in the pattern (`.`, `+`, `(`,
+  // `[`, `$`, `|`, ...) are matched literally rather than interpreted.
+  final buf = StringBuffer('^');
+  for (final ch in pattern.split('')) {
+    if (ch == '*') {
+      buf.write('.*');
+    } else if (ch == '?') {
+      buf.write('.');
+    } else {
+      buf.write(RegExp.escape(ch));
+    }
+  }
+  buf.write(r'$');
+  return RegExp(buf.toString(), caseSensitive: false).hasMatch(input);
 }
