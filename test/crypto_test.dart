@@ -46,10 +46,11 @@ void main() {
     });
 
     test('wrong key fails', () async {
-      final encrypted =
-          await crypto.encryptMetadata002('secret', 'correct-key-0000000000000000');
+      final encrypted = await crypto.encryptMetadata002(
+          'secret', 'correct-key-0000000000000000');
       expect(
-        () => crypto.decryptMetadata002(encrypted, 'wrong-key-00000000000000000'),
+        () =>
+            crypto.decryptMetadata002(encrypted, 'wrong-key-00000000000000000'),
         throwsException,
       );
     });
@@ -64,19 +65,23 @@ void main() {
 
   group('encryptData / decryptData', () {
     test('round-trip', () async {
-      final key = Uint8List.fromList(utf8.encode('12345678901234567890123456789012'));
+      final key =
+          Uint8List.fromList(utf8.encode('12345678901234567890123456789012'));
       final data = Uint8List.fromList([1, 2, 3, 4, 5, 6, 7, 8]);
 
       final encrypted = await crypto.encryptData(data, key);
-      expect(encrypted.length, greaterThan(data.length + 12)); // IV + ciphertext + tag
+      expect(encrypted.length,
+          greaterThan(data.length + 12)); // IV + ciphertext + tag
 
       final decrypted = await crypto.decryptData(encrypted, key);
       expect(decrypted, equals(data));
     });
 
     test('wrong key fails', () async {
-      final key1 = Uint8List.fromList(utf8.encode('12345678901234567890123456789012'));
-      final key2 = Uint8List.fromList(utf8.encode('abcdefghijklmnopqrstuvwxyz123456'));
+      final key1 =
+          Uint8List.fromList(utf8.encode('12345678901234567890123456789012'));
+      final key2 =
+          Uint8List.fromList(utf8.encode('abcdefghijklmnopqrstuvwxyz123456'));
       final data = Uint8List.fromList([1, 2, 3]);
 
       final encrypted = await crypto.encryptData(data, key1);
@@ -120,14 +125,13 @@ void main() {
 
       final encrypted = await crypto.encryptMetadata002('hello', correctKey);
 
-      final result =
-          await crypto.tryDecrypt(encrypted, [wrongKey, correctKey]);
+      final result = await crypto.tryDecrypt(encrypted, [wrongKey, correctKey]);
       expect(result, equals('hello'));
     });
 
     test('throws when no key works', () async {
-      final encrypted =
-          await crypto.encryptMetadata002('hello', 'key-0000000000000000000000000');
+      final encrypted = await crypto.encryptMetadata002(
+          'hello', 'key-0000000000000000000000000');
       expect(
         () => crypto.tryDecrypt(encrypted, ['bad-key-00000000000000000000']),
         throwsA(isA<Exception>()),
@@ -137,36 +141,36 @@ void main() {
 
   group('pbkdf2', () {
     test('produces deterministic output', () {
-      final key1 = crypto.pbkdf2(
-          utf8.encode('password'), utf8.encode('salt'), 1, 64);
-      final key2 = crypto.pbkdf2(
-          utf8.encode('password'), utf8.encode('salt'), 1, 64);
+      final key1 =
+          crypto.pbkdf2(utf8.encode('password'), utf8.encode('salt'), 1, 64);
+      final key2 =
+          crypto.pbkdf2(utf8.encode('password'), utf8.encode('salt'), 1, 64);
       expect(key1, equals(key2));
     });
 
     test('different passwords produce different keys', () {
-      final key1 = crypto.pbkdf2(
-          utf8.encode('pass1'), utf8.encode('salt'), 1, 64);
-      final key2 = crypto.pbkdf2(
-          utf8.encode('pass2'), utf8.encode('salt'), 1, 64);
+      final key1 =
+          crypto.pbkdf2(utf8.encode('pass1'), utf8.encode('salt'), 1, 64);
+      final key2 =
+          crypto.pbkdf2(utf8.encode('pass2'), utf8.encode('salt'), 1, 64);
       expect(key1, isNot(equals(key2)));
     });
 
     test('different salts produce different keys', () {
-      final key1 = crypto.pbkdf2(
-          utf8.encode('pass'), utf8.encode('salt1'), 1, 64);
-      final key2 = crypto.pbkdf2(
-          utf8.encode('pass'), utf8.encode('salt2'), 1, 64);
+      final key1 =
+          crypto.pbkdf2(utf8.encode('pass'), utf8.encode('salt1'), 1, 64);
+      final key2 =
+          crypto.pbkdf2(utf8.encode('pass'), utf8.encode('salt2'), 1, 64);
       expect(key1, isNot(equals(key2)));
     });
 
     test('output length matches requested', () {
-      final key = crypto.pbkdf2(
-          utf8.encode('pass'), utf8.encode('salt'), 1, 32);
+      final key =
+          crypto.pbkdf2(utf8.encode('pass'), utf8.encode('salt'), 1, 32);
       expect(key.length, equals(32));
 
-      final key2 = crypto.pbkdf2(
-          utf8.encode('pass'), utf8.encode('salt'), 1, 128);
+      final key2 =
+          crypto.pbkdf2(utf8.encode('pass'), utf8.encode('salt'), 1, 128);
       expect(key2.length, equals(128));
     });
   });

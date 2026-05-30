@@ -35,9 +35,8 @@ class FilenCache {
     pathCache.clear();
   }
 
-  Future<void> clearParentCache(
-      String itemUuid, String itemType, FilenApi api, FilenCrypto crypto,
-      List<String> masterKeys) async {
+  Future<void> clearParentCache(String itemUuid, String itemType, FilenApi api,
+      FilenCrypto crypto, List<String> masterKeys) async {
     try {
       String? parentUuid;
 
@@ -134,7 +133,8 @@ class FilenCache {
 
     final res = await Future.wait((d as List).map((f) async {
       try {
-        final m = json.decode(await crypto.tryDecrypt(f['metadata'], masterKeys));
+        final m =
+            json.decode(await crypto.tryDecrypt(f['metadata'], masterKeys));
         return {
           'type': 'file',
           'name': m['name'],

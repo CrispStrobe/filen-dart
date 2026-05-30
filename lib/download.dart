@@ -4,7 +4,6 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 
 import 'package:filen_dart/api.dart';
@@ -51,7 +50,7 @@ class FilenDownload {
     final buffer = BytesBuilder();
 
     for (var i = startChunk; i <= endChunk && i < chunks; i++) {
-      final r = await http
+      final r = await api.client
           .get(Uri.parse('$host/${d['region']}/${d['bucket']}/$uuid/$i'));
       if (r.statusCode != 200) throw Exception('Chunk download failed');
 
@@ -91,7 +90,7 @@ class FilenDownload {
     int bytesDownloaded = 0;
 
     for (var i = 0; i < chunks; i++) {
-      final r = await http
+      final r = await api.client
           .get(Uri.parse('$host/${d['region']}/${d['bucket']}/$uuid/$i'));
       if (r.statusCode != 200) throw Exception('Chunk download failed');
 
@@ -137,7 +136,7 @@ class FilenDownload {
     int bytesDownloaded = 0;
 
     for (var i = 0; i < chunks; i++) {
-      final r = await http
+      final r = await api.client
           .get(Uri.parse('$host/${d['region']}/${d['bucket']}/$uuid/$i'));
       if (r.statusCode != 200) throw Exception('Chunk fail');
 
@@ -216,9 +215,8 @@ class FilenDownload {
 
       final treeData = await drive.getFlatFolderTree(itemInfo['uuid']);
       final rawFolders = treeData['folders'] as List? ?? [];
-      final rawFiles = (treeData['files'] as List?) ??
-          (treeData['uploads'] as List?) ??
-          [];
+      final rawFiles =
+          (treeData['files'] as List?) ?? (treeData['uploads'] as List?) ?? [];
 
       final folderMap = <String, Map<String, dynamic>>{};
       for (var f in rawFolders) {
@@ -226,10 +224,14 @@ class FilenDownload {
           String uuid, encName, parent;
           if (f is List) {
             if (f.length < 3) continue;
-            uuid = f[0]; encName = f[1]; parent = f[2];
+            uuid = f[0];
+            encName = f[1];
+            parent = f[2];
           } else {
             if (f['deleted'] == true || f['trash'] == true) continue;
-            uuid = f['uuid']; encName = f['name']; parent = f['parent'];
+            uuid = f['uuid'];
+            encName = f['name'];
+            parent = f['parent'];
           }
           var decName = await crypto.tryDecrypt(encName, masterKeys);
           if (decName.startsWith('{')) {
@@ -260,10 +262,14 @@ class FilenDownload {
           String uuid, encMeta, parent;
           if (f is List) {
             if (f.length < 6) continue;
-            uuid = f[0]; parent = f[4]; encMeta = f[5];
+            uuid = f[0];
+            parent = f[4];
+            encMeta = f[5];
           } else {
             if (f['deleted'] == true || f['trash'] == true) continue;
-            uuid = f['uuid']; parent = f['parent']; encMeta = f['metadata'];
+            uuid = f['uuid'];
+            parent = f['parent'];
+            encMeta = f['metadata'];
           }
 
           final decMeta = await crypto.tryDecrypt(encMeta, masterKeys);
@@ -278,7 +284,7 @@ class FilenDownload {
             relDir = '';
           else if (relDir == null) continue;
 
-          final localPath = p.join(baseDestPath, relDir!, filename);
+          final localPath = p.join(baseDestPath, relDir, filename);
           tasks.add({
             'remoteUuid': uuid,
             'localPath': localPath,
@@ -358,8 +364,7 @@ class FilenDownload {
       }
 
       try {
-        final result =
-            await downloadFile(remoteUuid, savePath: localPath);
+        final result = await downloadFile(remoteUuid, savePath: localPath);
 
         if (preserveTimestamps) {
           final mt = result['modificationTime'] ?? remoteModTime;

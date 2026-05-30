@@ -54,8 +54,7 @@ void main() {
     }
     // Also clean parent
     try {
-      final parent =
-          await client.resolvePath('/__test_filen_dart_smoke__');
+      final parent = await client.resolvePath('/__test_filen_dart_smoke__');
       await client.trashItem(parent['uuid'], 'folder');
       await client.deletePermanently(parent['uuid'], 'folder');
     } catch (_) {}
@@ -111,8 +110,7 @@ void main() {
       expect(downloaded, equals('Hello from filen-dart live test!'));
     } finally {
       if (tempFile.existsSync()) tempFile.deleteSync();
-      final dl =
-          File('${Directory.systemTemp.path}/filen_test_download.txt');
+      final dl = File('${Directory.systemTemp.path}/filen_test_download.txt');
       if (dl.existsSync()) dl.deleteSync();
     }
   });

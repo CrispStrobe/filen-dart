@@ -81,8 +81,8 @@ void main() {
 
       expect(
         () => auth.login('test@example.com', 'password'),
-        throwsA(isA<Exception>().having(
-            (e) => e.toString(), 'message', contains('enter_2fa'))),
+        throwsA(isA<Exception>()
+            .having((e) => e.toString(), 'message', contains('enter_2fa'))),
       );
     });
   });

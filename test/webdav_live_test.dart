@@ -1,10 +1,9 @@
 @Tags(['live'])
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:test/test.dart';
-import 'package:http/http.dart' as http;
 import 'package:filen_dart/filen_client.dart';
+import 'package:filen_dart/webdav_filesystem.dart';
 
 /// Live WebDAV integration tests against real Filen backend.
 /// Requires FILEN_EMAIL and FILEN_PASSWORD environment variables.
@@ -21,8 +20,6 @@ void main() {
   }
 
   late FilenClient client;
-  late int port;
-  late HttpServer? server;
 
   setUpAll(() async {
     final tempDir = Directory.systemTemp.createTempSync('filen_webdav_test_');
@@ -34,11 +31,6 @@ void main() {
     final rootUUID = await client.fetchBaseFolderUUID();
     credentials['baseFolderUUID'] = rootUUID;
     client.setAuth(credentials);
-
-    // Find an available port
-    final tempServer = await ServerSocket.bind('localhost', 0);
-    port = tempServer.port;
-    await tempServer.close();
   });
 
   tearDownAll(() async {
@@ -50,14 +42,10 @@ void main() {
     // For simplicity, test via HTTP against a running server
     // This test validates the WebDAV filesystem integration
 
-    final basicAuth =
-        'Basic ${base64Encode(utf8.encode('filen:filen-webdav'))}';
-
     // We can't easily start the shelf server here without the full
     // CLI wiring, so this test validates the client can construct
     // the filesystem objects needed for WebDAV
-    final filenFS =
-        FilenFileSystem(client: client);
+    final filenFS = FilenFileSystem(client: client);
 
     // Verify the filesystem can resolve root
     final rootDir = filenFS.directory('/');
@@ -70,8 +58,7 @@ void main() {
   });
 
   test('WebDAV filesystem can list root directory', () async {
-    final filenFS =
-        FilenFileSystem(client: client);
+    final filenFS = FilenFileSystem(client: client);
 
     final rootDir = filenFS.directory('/');
     final entities = await rootDir.list().toList();
@@ -82,10 +69,10 @@ void main() {
   });
 
   test('WebDAV filesystem can create and delete directory', () async {
-    final filenFS =
-        FilenFileSystem(client: client);
+    final filenFS = FilenFileSystem(client: client);
 
-    final testDir = filenFS.directory('/__webdav_test_${DateTime.now().millisecondsSinceEpoch}');
+    final testDir = filenFS
+        .directory('/__webdav_test_${DateTime.now().millisecondsSinceEpoch}');
 
     try {
       // Create

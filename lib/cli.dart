@@ -4,7 +4,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:args/args.dart';
@@ -54,13 +53,14 @@ class FilenCLI {
           help: 'Limit find to N levels (-1 for infinite)', defaultsTo: '-1')
       ..addFlag('background',
           abbr: 'b', help: 'Run WebDAV server in background')
-      ..addFlag('daemon',
-          hide: true, help: 'Internal: run as daemon process')
+      ..addFlag('daemon', hide: true, help: 'Internal: run as daemon process')
       ..addOption('mount-point', abbr: 'm', help: 'WebDAV mount point path')
       ..addOption('port', help: 'WebDAV server port', defaultsTo: '8080')
       ..addFlag('webdav-debug', help: 'Enable WebDAV debug logging')
-      ..addOption('ssl-cert', help: 'Path to SSL certificate file for WebDAV HTTPS')
-      ..addOption('ssl-key', help: 'Path to SSL private key file for WebDAV HTTPS');
+      ..addOption('ssl-cert',
+          help: 'Path to SSL certificate file for WebDAV HTTPS')
+      ..addOption('ssl-key',
+          help: 'Path to SSL private key file for WebDAV HTTPS');
 
     try {
       final argResults = parser.parse(arguments);
@@ -200,9 +200,11 @@ class FilenCLI {
   }
 
   void printHelp() {
-    print('\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557');
+    print(
+        '\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557');
     print('\u2551    Filen CLI - v0.0.4                       \u2551');
-    print('\u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d');
+    print(
+        '\u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d');
     print('');
     print('Flags:');
     print('  -v, --verbose              Enable debug output');
@@ -336,10 +338,8 @@ class FilenCLI {
     final uuid = res['uuid'];
     print('\ud83d\udcc2 ${res['path']} (UUID: ${uuid.substring(0, 8)}...)\n');
 
-    final folders =
-        await client.listFoldersAsync(uuid, detailed: detailed);
-    final files =
-        await client.listFolderFiles(uuid, detailed: detailed);
+    final folders = await client.listFoldersAsync(uuid, detailed: detailed);
+    final files = await client.listFolderFiles(uuid, detailed: detailed);
     final items = [...folders, ...files];
 
     if (items.isEmpty) {
@@ -505,8 +505,7 @@ class FilenCLI {
     final include = argResults['include'] as List<String>;
     final exclude = argResults['exclude'] as List<String>;
 
-    final batchId =
-        config.generateBatchId('upload', actualSources, targetPath);
+    final batchId = config.generateBatchId('upload', actualSources, targetPath);
     print("\ud83d\udd04 Batch ID: $batchId");
     print("\ud83c\udfaf Target: $targetPath");
     var batchState = await config.loadBatchState(batchId);
@@ -644,26 +643,22 @@ class FilenCLI {
       try {
         destParent =
             await client.resolvePath(parentDir == '.' ? '/' : parentDir);
-        if (destParent!['type'] != 'folder') throw Exception('Parent not dir');
+        if (destParent['type'] != 'folder') throw Exception('Parent not dir');
       } catch (e) {
         _exit('Destination parent not found.');
       }
       isRename = true;
     }
 
-    if (destParent == null) {
-      _exit('Could not resolve destination.');
-      return;
-    }
-
-    print('\ud83d\ude9a Moving "${src['path']}" to "${destParent['path']}/$destName"...');
+    print(
+        '\ud83d\ude9a Moving "${src['path']}" to "${destParent['path']}/$destName"...');
 
     if (src['parent'] != destParent['uuid']) {
       await client.moveItem(src['uuid'], destParent['uuid'], src['type']);
     }
 
     final currentName = p.basename(src['path']!);
-    if (isRename && destName != currentName && destName != null) {
+    if (isRename && destName != currentName) {
       await client.renameItem(src['uuid'], destName, src['type']);
     }
 
@@ -701,12 +696,8 @@ class FilenCLI {
       targetName = p.basename(destPath);
     }
 
-    if (destFolder == null) {
-      _exit('Invalid destination.');
-      return;
-    }
-
-    print('\ud83d\udccb Copying "${src['path']}" to "${destFolder['path']}/$targetName"...');
+    print(
+        '\ud83d\udccb Copying "${src['path']}" to "${destFolder['path']}/$targetName"...');
 
     final tempDir = Directory.systemTemp.createTempSync('filen_cli_cp_');
     final tempFile = File(p.join(tempDir.path, targetName));
@@ -768,7 +759,8 @@ class FilenCLI {
 
     print('\u26a0\ufe0f WARNING: This will PERMANENTLY delete the item!');
     if (!forceFlag) {
-      if (!_confirmAction('\u2753 Permanently delete ${src['type']} "$path"?')) {
+      if (!_confirmAction(
+          '\u2753 Permanently delete ${src['type']} "$path"?')) {
         print("\u274c Cancelled");
         return;
       }
@@ -799,7 +791,8 @@ class FilenCLI {
       final type = item['type'] == 'folder' ? '\ud83d\udcc1' : '\ud83d\udcc4';
       final uuid = item['uuid'] ?? 'N/A';
       final uuidDisplay = showFullUUIDs ? uuid : '${uuid.substring(0, 8)}...';
-      final size = item['type'] == 'folder' ? '<DIR>' : formatSize(item['size'] ?? 0);
+      final size =
+          item['type'] == 'folder' ? '<DIR>' : formatSize(item['size'] ?? 0);
       print('  $type  ${item['name']}  ($size)  [$uuidDisplay]');
     }
 
@@ -815,7 +808,8 @@ class FilenCLI {
     final forceFlag = argResults['force'] as bool;
 
     if (!forceFlag) {
-      if (!_confirmAction('\u2753 Restore item "$itemUuid" to original location?')) {
+      if (!_confirmAction(
+          '\u2753 Restore item "$itemUuid" to original location?')) {
         print("\u274c Cancelled");
         return;
       }
@@ -1025,7 +1019,8 @@ class FilenCLI {
     if (existingPid != null) {
       final isRunning = await _isProcessRunning(existingPid);
       if (isRunning) {
-        stderr.writeln('\u274c WebDAV server is already running (PID: $existingPid).');
+        stderr.writeln(
+            '\u274c WebDAV server is already running (PID: $existingPid).');
         exit(1);
       } else {
         await config.clearWebdavPid();
@@ -1037,7 +1032,12 @@ class FilenCLI {
       try {
         final process = await Process.start(
           Platform.executable,
-          [Platform.script.toFilePath(), 'webdav-start', '--daemon', '--port=$port'],
+          [
+            Platform.script.toFilePath(),
+            'webdav-start',
+            '--daemon',
+            '--port=$port'
+          ],
           mode: ProcessStartMode.detached,
         );
         await Future.delayed(Duration(milliseconds: 1000));
@@ -1107,7 +1107,8 @@ class FilenCLI {
     }
 
     if (!await _isProcessRunning(pid)) {
-      print('\u274c WebDAV server PID file exists but process is not running (PID: $pid).');
+      print(
+          '\u274c WebDAV server PID file exists but process is not running (PID: $pid).');
       exit(1);
     }
 
@@ -1121,18 +1122,20 @@ class FilenCLI {
     final url = Uri.parse('http://localhost:$port/');
     print('\ud83e\uddea Testing WebDAV server at $url ...');
 
-    final basicAuth = 'Basic ${base64Encode(utf8.encode('filen:filen-webdav'))}';
+    final basicAuth =
+        'Basic ${base64Encode(utf8.encode('filen:filen-webdav'))}';
 
     try {
       final request = http.Request('PROPFIND', url)
         ..headers['Authorization'] = basicAuth
         ..headers['Depth'] = '0'
         ..headers['Content-Type'] = 'application/xml'
-        ..body = '<?xml version="1.0" encoding="utf-8"?><D:propfind xmlns:D="DAV:"><D:prop><D:resourcetype/></D:prop></D:propfind>';
+        ..body =
+            '<?xml version="1.0" encoding="utf-8"?><D:propfind xmlns:D="DAV:"><D:prop><D:resourcetype/></D:prop></D:propfind>';
 
       final response =
           await http.Client().send(request).timeout(Duration(seconds: 10));
-      final responseBody = await response.stream.bytesToString();
+      await response.stream.drain<void>();
 
       if (response.statusCode == 207) {
         print('\u2705 Connection successful! (207 Multi-Status)');
@@ -1180,13 +1183,13 @@ class FilenCLI {
   Future<void> handleMount(ArgResults argResults) async {
     await _prepareClient();
     final port = int.tryParse(argResults['port'] ?? '8080') ?? 8080;
-    final mountPoint = argResults['mount-point'] as String?;
     final sslCertPath = argResults['ssl-cert'] as String?;
     final sslKeyPath = argResults['ssl-key'] as String?;
     final useSSL = sslCertPath != null && sslKeyPath != null;
 
     print('\ud83d\udd10 User: ${client.email}');
-    print('\ud83c\udf10 Starting WebDAV server on port $port${useSSL ? " (HTTPS)" : ""}...\n');
+    print(
+        '\ud83c\udf10 Starting WebDAV server on port $port${useSSL ? " (HTTPS)" : ""}...\n');
 
     try {
       final filenFS = FilenFileSystem(client: client);
@@ -1225,7 +1228,8 @@ class FilenCLI {
       final protocol = useSSL ? 'https' : 'http';
       print('\u2705 WebDAV server started!');
       print('\ud83d\udce1 URL: $protocol://localhost:$port/');
-      print('\ud83d\udce1 Network: $protocol://${await _getLocalIpAddress()}:$port/');
+      print(
+          '\ud83d\udce1 Network: $protocol://${await _getLocalIpAddress()}:$port/');
       print('\ud83d\udd10 Auth: filen / filen-webdav');
       if (useSSL) print('\ud83d\udd12 SSL: enabled');
       print('\n\ud83d\uded1 Press Ctrl+C to stop\n');
@@ -1271,7 +1275,7 @@ class FilenCLI {
   Future<void> _prepareClient() async {
     final c = await config.readCredentials();
     if (c == null) _exit('Not logged in');
-    client.setAuth(c!);
+    client.setAuth(c);
     if (client.baseFolderUUID.isEmpty) {
       try {
         client.baseFolderUUID = await client.fetchBaseFolderUUID();
@@ -1286,7 +1290,7 @@ class FilenCLI {
   Future<Map<String, dynamic>> _requireAuth() async {
     final creds = await config.readCredentials();
     if (creds == null) _exit('Not logged in. Run "login" first.');
-    return creds!;
+    return creds;
   }
 
   bool _confirmAction(String prompt) {
@@ -1309,7 +1313,7 @@ class FilenCLI {
     }
   }
 
-  void _exit(String m) {
+  Never _exit(String m) {
     stderr.writeln('\u274c $m');
     exit(1);
   }

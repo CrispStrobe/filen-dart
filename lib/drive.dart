@@ -193,8 +193,7 @@ class FilenDrive {
   }
 
   Future<void> restoreItem(String uuid, String type) async {
-    final endpoint =
-        type == 'folder' ? '/v3/dir/restore' : '/v3/file/restore';
+    final endpoint = type == 'folder' ? '/v3/dir/restore' : '/v3/file/restore';
     await api.post(endpoint, {'uuid': uuid});
     if (baseFolderUUID.isNotEmpty) {
       cache.invalidate(baseFolderUUID);
@@ -213,12 +212,11 @@ class FilenDrive {
     await cache.clearParentCache(uuid, type, api, crypto, masterKeys);
     final mk = masterKeys.last;
     if (mk.isEmpty) throw Exception('No master keys available');
-    final nameHashed =
-        await crypto.hashFileName(newName, masterKeys, email);
+    final nameHashed = await crypto.hashFileName(newName, masterKeys, email);
 
     if (type == 'folder') {
-      final encName = await crypto.encryptMetadata002(
-          json.encode({'name': newName}), mk);
+      final encName =
+          await crypto.encryptMetadata002(json.encode({'name': newName}), mk);
       await api.post('/v3/dir/rename',
           {'uuid': uuid, 'name': encName, 'nameHashed': nameHashed});
     } else {
@@ -229,8 +227,7 @@ class FilenDrive {
       metaJson['name'] = newName;
 
       final fileKey = metaJson['key'];
-      final nameEncrypted =
-          await crypto.encryptMetadata002(newName, fileKey);
+      final nameEncrypted = await crypto.encryptMetadata002(newName, fileKey);
       final metadataEncrypted =
           await crypto.encryptMetadata002(json.encode(metaJson), mk);
 
@@ -272,9 +269,8 @@ class FilenDrive {
     final treeData = await getFlatFolderTree(rootUuid);
 
     final rawFolders = treeData['folders'] as List? ?? [];
-    final rawFiles = (treeData['files'] as List?) ??
-        (treeData['uploads'] as List?) ??
-        [];
+    final rawFiles =
+        (treeData['files'] as List?) ?? (treeData['uploads'] as List?) ?? [];
 
     api.log(
         'Tree fetched: ${rawFolders.length} folders, ${rawFiles.length} files');
@@ -286,10 +282,14 @@ class FilenDrive {
         String uuid, encName, parent;
         if (f is List) {
           if (f.length < 3) continue;
-          uuid = f[0]; encName = f[1]; parent = f[2];
+          uuid = f[0];
+          encName = f[1];
+          parent = f[2];
         } else {
           if (f['deleted'] == true || f['trash'] == true) continue;
-          uuid = f['uuid']; encName = f['name']; parent = f['parent'];
+          uuid = f['uuid'];
+          encName = f['name'];
+          parent = f['parent'];
         }
 
         var decName = await crypto.tryDecrypt(encName, masterKeys);
@@ -313,10 +313,14 @@ class FilenDrive {
         String uuid, encMeta, parent;
         if (f is List) {
           if (f.length < 6) continue;
-          uuid = f[0]; parent = f[4]; encMeta = f[5];
+          uuid = f[0];
+          parent = f[4];
+          encMeta = f[5];
         } else {
           if (f['deleted'] == true || f['trash'] == true) continue;
-          uuid = f['uuid']; parent = f['parent']; encMeta = f['metadata'];
+          uuid = f['uuid'];
+          parent = f['parent'];
+          encMeta = f['metadata'];
         }
 
         final decMeta = await crypto.tryDecrypt(encMeta, masterKeys);
@@ -367,8 +371,7 @@ class FilenDrive {
       'name': 'Root'
     };
 
-    final pathParts =
-        cleanPath.split('/').where((p) => p.isNotEmpty).toList();
+    final pathParts = cleanPath.split('/').where((p) => p.isNotEmpty).toList();
 
     for (var i = 0; i < pathParts.length; i++) {
       final part = pathParts[i];
@@ -531,17 +534,15 @@ class FilenDrive {
     };
   }
 
-  Future<List<Map<String, dynamic>>> findFiles(
-      String startPath, String pattern,
+  Future<List<Map<String, dynamic>>> findFiles(String startPath, String pattern,
       {int maxDepth = -1}) async {
     final rootInfo = await resolvePath(startPath);
     if (rootInfo['type'] != 'folder') return [];
 
     final treeData = await getFlatFolderTree(rootInfo['uuid']);
     final rawFolders = treeData['folders'] as List? ?? [];
-    final rawFiles = (treeData['files'] as List?) ??
-        (treeData['uploads'] as List?) ??
-        [];
+    final rawFiles =
+        (treeData['files'] as List?) ?? (treeData['uploads'] as List?) ?? [];
 
     final folderMap = <String, Map<String, dynamic>>{};
 
@@ -550,10 +551,14 @@ class FilenDrive {
         String uuid, encName, parent;
         if (f is List) {
           if (f.length < 3) continue;
-          uuid = f[0]; encName = f[1]; parent = f[2];
+          uuid = f[0];
+          encName = f[1];
+          parent = f[2];
         } else {
           if (f['deleted'] == true || f['trash'] == true) continue;
-          uuid = f['uuid']; encName = f['name']; parent = f['parent'];
+          uuid = f['uuid'];
+          encName = f['name'];
+          parent = f['parent'];
         }
         var decName = await crypto.tryDecrypt(encName, masterKeys);
         if (decName.startsWith('{')) {
@@ -596,14 +601,17 @@ class FilenDrive {
         String uuid, encMeta, parent;
         if (f is List) {
           if (f.length < 6) continue;
-          uuid = f[0]; parent = f[4]; encMeta = f[5];
+          uuid = f[0];
+          parent = f[4];
+          encMeta = f[5];
         } else {
           if (f['deleted'] == true || f['trash'] == true) continue;
-          uuid = f['uuid']; parent = f['parent']; encMeta = f['metadata'];
+          uuid = f['uuid'];
+          parent = f['parent'];
+          encMeta = f['metadata'];
         }
 
-        final meta =
-            json.decode(await crypto.tryDecrypt(encMeta, masterKeys));
+        final meta = json.decode(await crypto.tryDecrypt(encMeta, masterKeys));
         final name = meta['name'];
 
         if (!globRegex.hasMatch(name)) continue;
@@ -615,14 +623,14 @@ class FilenDrive {
 
         if (maxDepth != -1) {
           final relDepth =
-              dirPath!.split('/').length - startPath.split('/').length;
+              dirPath.split('/').length - startPath.split('/').length;
           if (relDepth >= maxDepth) continue;
         }
 
         results.add({
           'uuid': uuid,
           'name': name,
-          'fullPath': p.join(dirPath!, name).replaceAll('\\', '/'),
+          'fullPath': p.join(dirPath, name).replaceAll('\\', '/'),
           'size': meta['size'] ?? 0,
           'lastModified': meta['lastModified'] ?? 0
         });
@@ -647,8 +655,7 @@ class FilenDrive {
       final rootUuid = root['uuid'];
       final adjacency = await fetchAndParseTree(rootUuid);
 
-      void printNode(
-          String parentUuid, int currentDepth, String prefix) {
+      void printNode(String parentUuid, int currentDepth, String prefix) {
         if (currentDepth >= maxDepth) return;
 
         final children = adjacency[parentUuid] ?? [];
@@ -672,8 +679,7 @@ class FilenDrive {
             printNode(item['uuid'], currentDepth + 1, childPrefix);
           } else {
             final size = formatSize(item['size']);
-            printLine(
-                "$prefix$connector📄 ${item['name']} ($size)");
+            printLine("$prefix$connector📄 ${item['name']} ($size)");
           }
         }
       }
@@ -685,8 +691,7 @@ class FilenDrive {
   }
 
   /// Verify uploaded file using metadata hash (no download needed).
-  Future<bool> verifyUploadMetadata(
-      String fileUuid, File originalFile) async {
+  Future<bool> verifyUploadMetadata(String fileUuid, File originalFile) async {
     api.log('Verifying upload using metadata check...');
 
     print('   📊 Hashing local file...');
@@ -695,8 +700,7 @@ class FilenDrive {
 
     print('   📋 Fetching metadata from server...');
     final metadata = await getFileMetadata(fileUuid);
-    final metaStr =
-        await crypto.tryDecrypt(metadata['metadata'], masterKeys);
+    final metaStr = await crypto.tryDecrypt(metadata['metadata'], masterKeys);
     final meta = json.decode(metaStr);
 
     final serverHash = meta['hash'] as String?;

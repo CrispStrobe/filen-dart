@@ -1,12 +1,12 @@
 import 'package:test/test.dart';
 import 'package:filen_dart/filen_client.dart';
-import 'package:filen_dart/utils.dart';
 
 void main() {
   group('FilenClient facade', () {
     test('creates all sub-modules', () {
       final config = ConfigService(
-        configPath: '/tmp/filen_cli_test_${DateTime.now().millisecondsSinceEpoch}',
+        configPath:
+            '/tmp/filen_cli_test_${DateTime.now().millisecondsSinceEpoch}',
         storage: InMemoryConfigStorage(),
       );
       final client = FilenClient(config: config);
@@ -22,7 +22,8 @@ void main() {
 
     test('setAuth propagates to all modules', () {
       final config = ConfigService(
-        configPath: '/tmp/filen_cli_test_${DateTime.now().millisecondsSinceEpoch}',
+        configPath:
+            '/tmp/filen_cli_test_${DateTime.now().millisecondsSinceEpoch}',
         storage: InMemoryConfigStorage(),
       );
       final client = FilenClient(config: config);
@@ -42,7 +43,8 @@ void main() {
 
     test('setAuth handles empty masterKeys', () {
       final config = ConfigService(
-        configPath: '/tmp/filen_cli_test_${DateTime.now().millisecondsSinceEpoch}',
+        configPath:
+            '/tmp/filen_cli_test_${DateTime.now().millisecondsSinceEpoch}',
         storage: InMemoryConfigStorage(),
       );
       final client = FilenClient(config: config);
@@ -59,7 +61,8 @@ void main() {
 
     test('debugMode propagates to api', () {
       final config = ConfigService(
-        configPath: '/tmp/filen_cli_test_${DateTime.now().millisecondsSinceEpoch}',
+        configPath:
+            '/tmp/filen_cli_test_${DateTime.now().millisecondsSinceEpoch}',
         storage: InMemoryConfigStorage(),
       );
       final client = FilenClient(config: config);
@@ -72,7 +75,8 @@ void main() {
 
     test('apiKey getter/setter works', () {
       final config = ConfigService(
-        configPath: '/tmp/filen_cli_test_${DateTime.now().millisecondsSinceEpoch}',
+        configPath:
+            '/tmp/filen_cli_test_${DateTime.now().millisecondsSinceEpoch}',
         storage: InMemoryConfigStorage(),
       );
       final client = FilenClient(config: config);
@@ -83,7 +87,8 @@ void main() {
 
     test('baseFolderUUID getter/setter works', () {
       final config = ConfigService(
-        configPath: '/tmp/filen_cli_test_${DateTime.now().millisecondsSinceEpoch}',
+        configPath:
+            '/tmp/filen_cli_test_${DateTime.now().millisecondsSinceEpoch}',
         storage: InMemoryConfigStorage(),
       );
       final client = FilenClient(config: config);
@@ -94,7 +99,8 @@ void main() {
 
     test('shouldIncludeFile delegates to utils', () {
       final config = ConfigService(
-        configPath: '/tmp/filen_cli_test_${DateTime.now().millisecondsSinceEpoch}',
+        configPath:
+            '/tmp/filen_cli_test_${DateTime.now().millisecondsSinceEpoch}',
         storage: InMemoryConfigStorage(),
       );
       final client = FilenClient(config: config);
@@ -105,7 +111,8 @@ void main() {
 
     test('accepts custom http client', () {
       final config = ConfigService(
-        configPath: '/tmp/filen_cli_test_${DateTime.now().millisecondsSinceEpoch}',
+        configPath:
+            '/tmp/filen_cli_test_${DateTime.now().millisecondsSinceEpoch}',
         storage: InMemoryConfigStorage(),
       );
       // Should not throw

@@ -102,16 +102,13 @@ class FilenUpload {
             : DateTime.now().millisecondsSinceEpoch,
       });
 
-      final nameEncrypted =
-          await crypto.encryptMetadata002(name, fileKeyStr);
+      final nameEncrypted = await crypto.encryptMetadata002(name, fileKeyStr);
       final sizeEncrypted =
           await crypto.encryptMetadata002(size.toString(), fileKeyStr);
       final mimeEncrypted = await crypto.encryptMetadata002(
           'application/octet-stream', fileKeyStr);
-      final metadataEncrypted =
-          await crypto.encryptMetadata002(metaJson, mk);
-      final nameHashed =
-          await crypto.hashFileName(name, masterKeys, email);
+      final metadataEncrypted = await crypto.encryptMetadata002(metaJson, mk);
+      final nameHashed = await crypto.hashFileName(name, masterKeys, email);
 
       await api.post('/v3/upload/empty', {
         'uuid': uuid,
@@ -177,8 +174,7 @@ class FilenUpload {
         if (onProgress != null) {
           onProgress(index + 1, totalChunks, offset + len, size);
         } else {
-          final progress =
-              ((index + 1) / totalChunks * 100).toStringAsFixed(1);
+          final progress = ((index + 1) / totalChunks * 100).toStringAsFixed(1);
           stdout.write(
               '     Uploading... ${index + 1}/$totalChunks chunks ($progress%)  \r');
         }
@@ -189,8 +185,7 @@ class FilenUpload {
           }).timeout(Duration(seconds: 30));
 
           if (r.statusCode != 200) {
-            throw Exception(
-                'Chunk upload failed: ${r.statusCode} - ${r.body}');
+            throw Exception('Chunk upload failed: ${r.statusCode} - ${r.body}');
           }
         } catch (e) {
           api.log('Chunk $index failed: $e');
@@ -210,8 +205,7 @@ class FilenUpload {
       print('');
 
       byteSink.close();
-      final totalHash =
-          HEX.encode(digestSink.value?.bytes ?? []).toLowerCase();
+      final totalHash = HEX.encode(digestSink.value?.bytes ?? []).toLowerCase();
 
       final metaJsonWithHash = json.encode({
         'name': name,
@@ -224,16 +218,14 @@ class FilenUpload {
             : DateTime.now().millisecondsSinceEpoch,
       });
 
-      final nameEncrypted =
-          await crypto.encryptMetadata002(name, fileKeyStr);
+      final nameEncrypted = await crypto.encryptMetadata002(name, fileKeyStr);
       final sizeEncrypted =
           await crypto.encryptMetadata002(size.toString(), fileKeyStr);
       final mimeEncrypted = await crypto.encryptMetadata002(
           'application/octet-stream', fileKeyStr);
       final metadataEncryptedWithHash =
           await crypto.encryptMetadata002(metaJsonWithHash, mk);
-      final nameHashed =
-          await crypto.hashFileName(name, masterKeys, email);
+      final nameHashed = await crypto.hashFileName(name, masterKeys, email);
 
       await api.post('/v3/upload/done', {
         'uuid': uuid,
@@ -306,8 +298,15 @@ class FilenUpload {
                 tasks,
                 preserveTimestamps);
           } else if (type == FileSystemEntityType.file) {
-            await _processEntityForUpload(File(sourceArg), sourceArg,
-                targetPath, recursive, include, exclude, tasks, preserveTimestamps);
+            await _processEntityForUpload(
+                File(sourceArg),
+                sourceArg,
+                targetPath,
+                recursive,
+                include,
+                exclude,
+                tasks,
+                preserveTimestamps);
           } else {
             api.log("⚠️ Source not found: $sourceArg");
           }
@@ -336,12 +335,10 @@ class FilenUpload {
       final status = task['status'] as String;
       final remoteName = p.basename(remotePath);
 
-      final pct = totalTasks > 0
-          ? ((i) / totalTasks * 100).toStringAsFixed(1)
-          : '0.0';
+      final pct =
+          totalTasks > 0 ? ((i) / totalTasks * 100).toStringAsFixed(1) : '0.0';
       final width = 20;
-      final filled =
-          totalTasks > 0 ? ((i / totalTasks) * width).round() : 0;
+      final filled = totalTasks > 0 ? ((i / totalTasks) * width).round() : 0;
       final bar = '█' * filled + '░' * (width - filled);
 
       if (!api.debugMode) {
@@ -370,8 +367,7 @@ class FilenUpload {
         continue;
       }
 
-      final remoteParentPath =
-          p.dirname(remotePath).replaceAll('\\', '/');
+      final remoteParentPath = p.dirname(remotePath).replaceAll('\\', '/');
       Map<String, dynamic> parentInfo;
       try {
         parentInfo = await drive.createFolderRecursive(remoteParentPath);
@@ -386,11 +382,9 @@ class FilenUpload {
         final cachedFiles = cache.fileCache[parentInfo['uuid']]?.items;
         bool exists = false;
         if (cachedFiles != null) {
-          exists =
-              (cachedFiles as List).any((f) => f['name'] == remoteName);
+          exists = (cachedFiles as List).any((f) => f['name'] == remoteName);
         } else {
-          exists =
-              await drive.checkFileExists(parentInfo['uuid'], remoteName);
+          exists = await drive.checkFileExists(parentInfo['uuid'], remoteName);
         }
 
         if (exists && onConflict == 'skip') {
@@ -487,9 +481,8 @@ class FilenUpload {
           sourceBase == './') {
         remoteBase = targetPath;
       } else {
-        remoteBase = p
-            .join(targetPath, p.basename(localDir.path))
-            .replaceAll('\\', '/');
+        remoteBase =
+            p.join(targetPath, p.basename(localDir.path)).replaceAll('\\', '/');
       }
 
       await drive.createFolderRecursive(remoteBase);
@@ -497,10 +490,8 @@ class FilenUpload {
       await for (final fileEntity
           in localDir.list(recursive: true, followLinks: false)) {
         if (fileEntity is File) {
-          final relPath =
-              p.relative(fileEntity.path, from: localDir.path);
-          final remotePath =
-              p.join(remoteBase, relPath).replaceAll('\\', '/');
+          final relPath = p.relative(fileEntity.path, from: localDir.path);
+          final remotePath = p.join(remoteBase, relPath).replaceAll('\\', '/');
 
           if (shouldIncludeFile(
               p.basename(fileEntity.path), include, exclude)) {
@@ -546,7 +537,8 @@ class FilenUpload {
     String parentUuid, {
     Function(int bytesUploaded, int totalBytes)? onProgress,
   }) async {
-    api.log('Starting memory upload for $fileName (${formatSize(data.length)})');
+    api.log(
+        'Starting memory upload for $fileName (${formatSize(data.length)})');
 
     final size = data.length;
     final uuid = crypto.uuid();
@@ -568,14 +560,11 @@ class FilenUpload {
 
       final nameEncrypted =
           await crypto.encryptMetadata002(fileName, fileKeyStr);
-      final sizeEncrypted =
-          await crypto.encryptMetadata002('0', fileKeyStr);
+      final sizeEncrypted = await crypto.encryptMetadata002('0', fileKeyStr);
       final mimeEncrypted = await crypto.encryptMetadata002(
           'application/octet-stream', fileKeyStr);
-      final metadataEncrypted =
-          await crypto.encryptMetadata002(metaJson, mk);
-      final nameHashed =
-          await crypto.hashFileName(fileName, masterKeys, email);
+      final metadataEncrypted = await crypto.encryptMetadata002(metaJson, mk);
+      final nameHashed = await crypto.hashFileName(fileName, masterKeys, email);
 
       await api.post('/v3/upload/empty', {
         'uuid': uuid,
@@ -596,7 +585,6 @@ class FilenUpload {
     final uploadKey = crypto.randomString(32);
     final rm = crypto.randomString(32);
     const chunkSz = 1048576;
-    final totalChunks = (size / chunkSz).ceil();
     final ingest = 'https://ingest.filen.io';
 
     int offset = 0;
@@ -620,11 +608,9 @@ class FilenUpload {
       int retry = 0;
       while (retry < 3) {
         try {
-          final r = await http
-              .post(url,
-                  body: encChunk,
-                  headers: {'Authorization': 'Bearer ${api.apiKey}'})
-              .timeout(Duration(seconds: 45));
+          final r = await http.post(url, body: encChunk, headers: {
+            'Authorization': 'Bearer ${api.apiKey}'
+          }).timeout(Duration(seconds: 45));
           if (r.statusCode != 200) {
             throw Exception('Status ${r.statusCode}: ${r.body}');
           }
@@ -643,8 +629,7 @@ class FilenUpload {
     }
 
     byteSink.close();
-    final totalHash =
-        HEX.encode(digestSink.value?.bytes ?? []).toLowerCase();
+    final totalHash = HEX.encode(digestSink.value?.bytes ?? []).toLowerCase();
 
     final metaJsonWithHash = json.encode({
       'name': fileName,
@@ -655,16 +640,14 @@ class FilenUpload {
       'lastModified': DateTime.now().millisecondsSinceEpoch,
     });
 
-    final nameEncrypted =
-        await crypto.encryptMetadata002(fileName, fileKeyStr);
+    final nameEncrypted = await crypto.encryptMetadata002(fileName, fileKeyStr);
     final sizeEncrypted =
         await crypto.encryptMetadata002(size.toString(), fileKeyStr);
-    final mimeEncrypted = await crypto.encryptMetadata002(
-        'application/octet-stream', fileKeyStr);
+    final mimeEncrypted =
+        await crypto.encryptMetadata002('application/octet-stream', fileKeyStr);
     final metadataEncryptedWithHash =
         await crypto.encryptMetadata002(metaJsonWithHash, mk);
-    final nameHashed =
-        await crypto.hashFileName(fileName, masterKeys, email);
+    final nameHashed = await crypto.hashFileName(fileName, masterKeys, email);
 
     await api.post('/v3/upload/done', {
       'uuid': uuid,

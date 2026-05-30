@@ -92,7 +92,8 @@ class FilenCrypto {
 
   // --- PBKDF2 ---
 
-  Uint8List pbkdf2(List<int> password, List<int> salt, int iterations, int length) {
+  Uint8List pbkdf2(
+      List<int> password, List<int> salt, int iterations, int length) {
     final mac = crypto.Hmac(crypto.sha512, password);
     final out = Uint8List(length);
     final blocks = (length / 64).ceil();
@@ -132,8 +133,7 @@ class FilenCrypto {
 
   // --- Filename hashing ---
 
-  Future<String> generateHMACKey(
-      List<String> masterKeys, String email) async {
+  Future<String> generateHMACKey(List<String> masterKeys, String email) async {
     final mk = masterKeys.last;
     if (mk.isEmpty) throw Exception('No master keys available');
     final emailBytes = utf8.encode(email.toLowerCase());

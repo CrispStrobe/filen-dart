@@ -12,7 +12,6 @@ import 'package:filen_dart/api.dart';
 import 'package:filen_dart/auth.dart';
 import 'package:filen_dart/cache.dart';
 import 'package:filen_dart/config.dart';
-import 'package:filen_dart/config_storage.dart';
 import 'package:filen_dart/crypto.dart';
 import 'package:filen_dart/download.dart';
 import 'package:filen_dart/drive.dart';
@@ -146,8 +145,7 @@ class FilenClient {
           {bool detailed = false}) =>
       drive.search(query, detailed: detailed);
 
-  Future<List<Map<String, dynamic>>> findFiles(
-          String startPath, String pattern,
+  Future<List<Map<String, dynamic>>> findFiles(String startPath, String pattern,
           {int maxDepth = -1}) =>
       drive.findFiles(startPath, pattern, maxDepth: maxDepth);
 
@@ -185,8 +183,7 @@ class FilenClient {
 
   Future<void> uploadBytes(Uint8List data, String fileName, String parentUuid,
           {Function(int, int)? onProgress}) =>
-      uploader.uploadBytes(data, fileName, parentUuid,
-          onProgress: onProgress);
+      uploader.uploadBytes(data, fileName, parentUuid, onProgress: onProgress);
 
   Future<void> upload(
     List<String> sources,
@@ -218,8 +215,7 @@ class FilenClient {
 
   Future<Map<String, dynamic>> downloadFile(String uuid,
           {String? savePath, Function(int, int)? onProgress}) =>
-      downloader.downloadFile(uuid,
-          savePath: savePath, onProgress: onProgress);
+      downloader.downloadFile(uuid, savePath: savePath, onProgress: onProgress);
 
   Future<void> downloadPath(
     String remotePath, {

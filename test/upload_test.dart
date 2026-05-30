@@ -58,8 +58,7 @@ void main() {
 
       final mockClient = MockClient((request) async {
         requests.add(request.url.path);
-        return http.Response(
-            json.encode({'status': true, 'data': {}}), 200);
+        return http.Response(json.encode({'status': true, 'data': {}}), 200);
       });
 
       api = FilenApi(client: mockClient);
@@ -69,11 +68,12 @@ void main() {
       drive.baseFolderUUID = 'root-uuid';
       drive.masterKeys = [masterKey];
       drive.email = 'test@example.com';
-      uploader = FilenUpload(
-          api: api, crypto: crypto, cache: cache, drive: drive);
+      uploader =
+          FilenUpload(api: api, crypto: crypto, cache: cache, drive: drive);
 
       // Create empty temp file
-      final tempFile = File('${Directory.systemTemp.path}/filen_test_empty.txt');
+      final tempFile =
+          File('${Directory.systemTemp.path}/filen_test_empty.txt');
       await tempFile.writeAsString('');
 
       try {
@@ -94,8 +94,7 @@ void main() {
 
       final mockClient = MockClient((request) async {
         // Accept all uploads
-        return http.Response(
-            json.encode({'status': true, 'data': {}}), 200);
+        return http.Response(json.encode({'status': true, 'data': {}}), 200);
       });
 
       api = FilenApi(client: mockClient);
@@ -105,8 +104,8 @@ void main() {
       drive.baseFolderUUID = 'root-uuid';
       drive.masterKeys = [masterKey];
       drive.email = 'test@example.com';
-      uploader = FilenUpload(
-          api: api, crypto: crypto, cache: cache, drive: drive);
+      uploader =
+          FilenUpload(api: api, crypto: crypto, cache: cache, drive: drive);
 
       // Create small temp file (< 1MB = single chunk)
       final tempFile =
@@ -136,8 +135,7 @@ void main() {
       String? capturedKey;
 
       final mockClient = MockClient((request) async {
-        return http.Response(
-            json.encode({'status': true, 'data': {}}), 200);
+        return http.Response(json.encode({'status': true, 'data': {}}), 200);
       });
 
       api = FilenApi(client: mockClient);
@@ -147,8 +145,8 @@ void main() {
       drive.baseFolderUUID = 'root-uuid';
       drive.masterKeys = [masterKey];
       drive.email = 'test@example.com';
-      uploader = FilenUpload(
-          api: api, crypto: crypto, cache: cache, drive: drive);
+      uploader =
+          FilenUpload(api: api, crypto: crypto, cache: cache, drive: drive);
 
       final tempFile =
           File('${Directory.systemTemp.path}/filen_test_start.txt');
@@ -179,8 +177,7 @@ void main() {
 
       final mockClient = MockClient((request) async {
         requests.add(request.url.path);
-        return http.Response(
-            json.encode({'status': true, 'data': {}}), 200);
+        return http.Response(json.encode({'status': true, 'data': {}}), 200);
       });
 
       api = FilenApi(client: mockClient);
@@ -190,11 +187,10 @@ void main() {
       drive.baseFolderUUID = 'root-uuid';
       drive.masterKeys = [masterKey];
       drive.email = 'test@example.com';
-      uploader = FilenUpload(
-          api: api, crypto: crypto, cache: cache, drive: drive);
+      uploader =
+          FilenUpload(api: api, crypto: crypto, cache: cache, drive: drive);
 
-      await uploader.uploadBytes(
-          Uint8List(0), 'empty.txt', 'parent-uuid');
+      await uploader.uploadBytes(Uint8List(0), 'empty.txt', 'parent-uuid');
 
       expect(requests, contains('/v3/upload/empty'));
     });

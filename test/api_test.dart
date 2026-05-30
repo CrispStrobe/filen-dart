@@ -41,7 +41,11 @@ void main() {
     test('post parses JSON and checks status', () async {
       final mockClient = MockClient((request) async {
         return http.Response(
-            json.encode({'status': true, 'data': {'foo': 'bar'}}), 200);
+            json.encode({
+              'status': true,
+              'data': {'foo': 'bar'}
+            }),
+            200);
       });
 
       final api = FilenApi(client: mockClient);
@@ -76,11 +80,12 @@ void main() {
 
       final api = FilenApi(client: mockClient);
 
-      expect(
+      await expectLater(
         () => api.makeRequest('GET', Uri.parse('https://example.com/fail'),
             maxRetries: 2, useAuth: false),
         throwsA(isA<Exception>()),
       );
+      expect(callCount, greaterThan(1));
     });
 
     test('supports POST method', () async {

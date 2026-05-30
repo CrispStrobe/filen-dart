@@ -16,6 +16,11 @@ class FilenApi {
 
   FilenApi({http.Client? client}) : _client = client ?? http.Client();
 
+  /// The underlying HTTP client (e.g. for direct chunk transfers to
+  /// egest/ingest hosts). Exposed so callers reuse the same client —
+  /// important for testing with a mock client.
+  http.Client get client => _client;
+
   void log(String msg) {
     if (debugMode) print('🔍 [DEBUG] $msg');
   }

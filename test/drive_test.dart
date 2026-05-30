@@ -50,8 +50,8 @@ void main() {
 
       expect(
         () => drive.resolvePath('/test'),
-        throwsA(isA<Exception>().having(
-            (e) => e.toString(), 'message', contains('Not logged in'))),
+        throwsA(isA<Exception>()
+            .having((e) => e.toString(), 'message', contains('Not logged in'))),
       );
     });
   });
@@ -64,8 +64,7 @@ void main() {
       final mockClient = MockClient((request) async {
         capturedEndpoint = request.url.path;
         capturedBody = json.decode(request.body);
-        return http.Response(
-            json.encode({'status': true, 'data': {}}), 200);
+        return http.Response(json.encode({'status': true, 'data': {}}), 200);
       });
 
       api = FilenApi(client: mockClient);
@@ -85,8 +84,7 @@ void main() {
 
       final mockClient = MockClient((request) async {
         capturedEndpoint = request.url.path;
-        return http.Response(
-            json.encode({'status': true, 'data': {}}), 200);
+        return http.Response(json.encode({'status': true, 'data': {}}), 200);
       });
 
       api = FilenApi(client: mockClient);
@@ -104,8 +102,7 @@ void main() {
 
       final mockClient = MockClient((request) async {
         capturedEndpoint = request.url.path;
-        return http.Response(
-            json.encode({'status': true, 'data': {}}), 200);
+        return http.Response(json.encode({'status': true, 'data': {}}), 200);
       });
 
       api = FilenApi(client: mockClient);
@@ -123,8 +120,7 @@ void main() {
 
       final mockClient = MockClient((request) async {
         capturedEndpoint = request.url.path;
-        return http.Response(
-            json.encode({'status': true, 'data': {}}), 200);
+        return http.Response(json.encode({'status': true, 'data': {}}), 200);
       });
 
       api = FilenApi(client: mockClient);
@@ -141,8 +137,7 @@ void main() {
   group('createFolderRecursive', () {
     test('returns root info for empty path', () async {
       final mockClient = MockClient((request) async {
-        return http.Response(
-            json.encode({'status': true, 'data': {}}), 200);
+        return http.Response(json.encode({'status': true, 'data': {}}), 200);
       });
 
       api = FilenApi(client: mockClient);

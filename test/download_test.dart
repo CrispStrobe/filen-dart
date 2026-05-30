@@ -76,8 +76,8 @@ void main() {
       drive.masterKeys = [masterKey];
       drive.email = 'test@example.com';
 
-      final downloader = FilenDownload(
-          api: api, crypto: crypto, cache: cache, drive: drive);
+      final downloader =
+          FilenDownload(api: api, crypto: crypto, cache: cache, drive: drive);
 
       final result = await downloader.downloadFileBytes('file-uuid-123');
 
@@ -129,8 +129,8 @@ void main() {
       drive.masterKeys = [masterKey];
       drive.email = 'test@example.com';
 
-      final downloader = FilenDownload(
-          api: api, crypto: crypto, cache: cache, drive: drive);
+      final downloader =
+          FilenDownload(api: api, crypto: crypto, cache: cache, drive: drive);
 
       final progressCalls = <List<int>>[];
       await downloader.downloadFileBytes(
@@ -189,15 +189,15 @@ void main() {
       drive.masterKeys = [masterKey];
       drive.email = 'test@example.com';
 
-      final downloader = FilenDownload(
-          api: api, crypto: crypto, cache: cache, drive: drive);
+      final downloader =
+          FilenDownload(api: api, crypto: crypto, cache: cache, drive: drive);
 
       final savePath =
           '${Directory.systemTemp.path}/filen_dl_test_${DateTime.now().millisecondsSinceEpoch}.txt';
 
       try {
-        final result = await downloader.downloadFile('uuid-123',
-            savePath: savePath);
+        final result =
+            await downloader.downloadFile('uuid-123', savePath: savePath);
 
         expect(result['filename'], equals('saved.txt'));
         expect(result['modificationTime'], equals(1700000000000));

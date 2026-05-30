@@ -35,8 +35,7 @@ class ConfigService {
   Future<void> saveCredentials(Map<String, dynamic> data) =>
       _storage.saveCredentials(data);
 
-  Future<Map<String, dynamic>?> readCredentials() =>
-      _storage.readCredentials();
+  Future<Map<String, dynamic>?> readCredentials() => _storage.readCredentials();
 
   Future<void> clearCredentials() => _storage.clearCredentials();
 

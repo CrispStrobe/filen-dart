@@ -26,11 +26,15 @@ void main() {
 
     test('invalidate removes folder and file cache', () {
       cache.folderCache['uuid-1'] = CacheEntry(
-        items: [{'name': 'test'}],
+        items: [
+          {'name': 'test'}
+        ],
         timestamp: fakeNow,
       );
       cache.fileCache['uuid-1'] = CacheEntry(
-        items: [{'name': 'file.txt'}],
+        items: [
+          {'name': 'file.txt'}
+        ],
         timestamp: fakeNow,
       );
 
@@ -41,11 +45,15 @@ void main() {
 
     test('invalidate does not affect other UUIDs', () {
       cache.folderCache['uuid-1'] = CacheEntry(
-        items: [{'name': 'test'}],
+        items: [
+          {'name': 'test'}
+        ],
         timestamp: fakeNow,
       );
       cache.folderCache['uuid-2'] = CacheEntry(
-        items: [{'name': 'other'}],
+        items: [
+          {'name': 'other'}
+        ],
         timestamp: fakeNow,
       );
 

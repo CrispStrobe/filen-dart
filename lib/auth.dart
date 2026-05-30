@@ -3,8 +3,6 @@
 /// Handles login, 2FA, key derivation, and session setup.
 import 'dart:convert';
 
-import 'package:hex/hex.dart';
-
 import 'package:filen_dart/api.dart';
 import 'package:filen_dart/crypto.dart';
 
@@ -88,8 +86,7 @@ class FilenAuth {
         'apiKey': loginData['apiKey'],
         'masterKeys': decryptedMasterKeys.join('|'),
         'baseFolderUUID': loginData['baseFolderUUID'] ?? '',
-        'userId':
-            (loginData['id'] ?? loginData['userId'] ?? '').toString(),
+        'userId': (loginData['id'] ?? loginData['userId'] ?? '').toString(),
       };
     } else {
       final code = data['code'] ?? '';

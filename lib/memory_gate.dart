@@ -31,7 +31,8 @@ class MemoryGate {
   Future<void> acquire(int bytes) async {
     // Check system memory if available
     final availableMemory = await _getAvailableMemory();
-    if (availableMemory != null && availableMemory < safetyMarginBytes + bytes) {
+    if (availableMemory != null &&
+        availableMemory < safetyMarginBytes + bytes) {
       // Wait for memory to free up
       final completer = Completer<void>();
       _waiters.add(_MemoryWaiter(bytes: bytes, completer: completer));
@@ -109,8 +110,8 @@ class MemoryGate {
         if (line.contains('Pages free:') ||
             line.contains('Pages inactive:') ||
             line.contains('Pages purgeable:')) {
-          final match = RegExp(r'(\d+)').firstMatch(
-              line.substring(line.indexOf(':')));
+          final match =
+              RegExp(r'(\d+)').firstMatch(line.substring(line.indexOf(':')));
           if (match != null) {
             freePages += int.tryParse(match.group(1)!) ?? 0;
           }
