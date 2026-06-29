@@ -10,7 +10,18 @@ import 'package:filen_dart/api.dart';
 import 'package:filen_dart/cache.dart';
 import 'package:filen_dart/crypto.dart';
 import 'package:filen_dart/drive.dart';
+import 'package:filen_dart/memory_gate.dart';
 import 'package:filen_dart/utils.dart';
+
+/// Chunk download concurrency (Step 1). N chunks fetched + decrypted at once,
+/// bounded by a [ChunkSemaphore]; out-of-order completion is reassembled by
+/// writing each chunk at its fixed file offset.
+const int kDefaultDownloadConcurrency = 4;
+
+/// Files with this many chunks or fewer keep the simple sequential path.
+const int kSequentialDownloadChunkThreshold = 2;
+
+const int _kDownloadChunkSize = 1048576;
 
 class FilenDownload {
   final FilenApi api;
@@ -80,6 +91,7 @@ class FilenDownload {
   /// Download file content as bytes (no disk I/O — needed for Web platform).
   Future<Uint8List> downloadFileBytes(
     String uuid, {
+    int maxConcurrentChunks = kDefaultDownloadConcurrency,
     Function(int bytesDownloaded, int totalBytes)? onProgress,
   }) async {
     api.log('Downloading file bytes: $uuid');
@@ -93,32 +105,78 @@ class FilenDownload {
     final host = 'https://egest.filen.io';
     final fileSize = meta['size'] ?? 0;
 
-    final buffer = BytesBuilder();
+    final useConcurrency =
+        maxConcurrentChunks > 1 && chunks > kSequentialDownloadChunkThreshold;
+
     int bytesDownloaded = 0;
 
-    for (var i = 0; i < chunks; i++) {
-      final r = await api.client
-          .get(Uri.parse('$host/${d['region']}/${d['bucket']}/$uuid/$i'));
-      if (r.statusCode != 200) {
-        throw Exception('Chunk download failed: ${r.statusCode}');
+    if (!useConcurrency) {
+      final buffer = BytesBuilder();
+      for (var i = 0; i < chunks; i++) {
+        final decrypted = await _fetchChunk(host, d, uuid, i, keyBytes);
+        buffer.add(decrypted);
+        bytesDownloaded += decrypted.length;
+        if (onProgress != null) onProgress(bytesDownloaded, fileSize);
       }
-
-      final decrypted = await crypto.decryptData(r.bodyBytes, keyBytes);
-      buffer.add(decrypted);
-
-      bytesDownloaded += decrypted.length;
-      if (onProgress != null) {
-        onProgress(bytesDownloaded, fileSize);
-      }
+      return buffer.toBytes();
     }
 
+    // Fetch N chunks concurrently into ordered slots, then assemble in index
+    // order. The whole file is held in memory regardless (this API returns the
+    // full bytes); concurrency only overlaps the network fetches.
+    final slots = List<Uint8List?>.filled(chunks, null);
+    final sem = ChunkSemaphore(maxConcurrentChunks);
+    final inflight = <Future<void>>[];
+    Object? firstError;
+
+    for (var i = 0; i < chunks; i++) {
+      if (firstError != null) break;
+      await sem.acquire();
+      if (firstError != null) {
+        sem.release();
+        break;
+      }
+      final idx = i;
+      inflight.add(() async {
+        try {
+          final decrypted = await _fetchChunk(host, d, uuid, idx, keyBytes);
+          slots[idx] = decrypted;
+          bytesDownloaded += decrypted.length;
+          if (onProgress != null) onProgress(bytesDownloaded, fileSize);
+        } catch (e) {
+          firstError ??= e;
+        } finally {
+          sem.release();
+        }
+      }());
+    }
+
+    await Future.wait(inflight);
+    if (firstError != null) throw firstError!;
+
+    final buffer = BytesBuilder();
+    for (var i = 0; i < chunks; i++) {
+      buffer.add(slots[i]!);
+    }
     return buffer.toBytes();
+  }
+
+  /// Fetch + decrypt a single chunk through the pooled client.
+  Future<Uint8List> _fetchChunk(
+      String host, dynamic d, String uuid, int i, Uint8List keyBytes) async {
+    final r = await api.client
+        .get(Uri.parse('$host/${d['region']}/${d['bucket']}/$uuid/$i'));
+    if (r.statusCode != 200) {
+      throw Exception('Chunk download failed: ${r.statusCode}');
+    }
+    return crypto.decryptData(r.bodyBytes, keyBytes);
   }
 
   /// Download a single file by UUID.
   Future<Map<String, dynamic>> downloadFile(
     String uuid, {
     String? savePath,
+    int maxConcurrentChunks = kDefaultDownloadConcurrency,
     Function(int bytesDownloaded, int totalBytes)? onProgress,
   }) async {
     api.log('Downloading file: $uuid');
@@ -140,28 +198,74 @@ class FilenDownload {
     }
 
     final targetPath = savePath ?? filename;
-    final sink = File(targetPath).openWrite();
+
+    // Tiny files keep the simple sequential streaming path.
+    final useConcurrency =
+        maxConcurrentChunks > 1 && chunks > kSequentialDownloadChunkThreshold;
 
     int bytesDownloaded = 0;
 
-    for (var i = 0; i < chunks; i++) {
-      final r = await api.client
-          .get(Uri.parse('$host/${d['region']}/${d['bucket']}/$uuid/$i'));
-      if (r.statusCode != 200) {
+    if (!useConcurrency) {
+      final sink = File(targetPath).openWrite();
+      try {
+        for (var i = 0; i < chunks; i++) {
+          final decrypted = await _fetchChunk(host, d, uuid, i, keyBytes);
+          sink.add(decrypted);
+          bytesDownloaded += decrypted.length;
+          if (onProgress != null) onProgress(bytesDownloaded, fileSize);
+        }
+      } finally {
         await sink.close();
-        throw Exception('Chunk download failed: ${r.statusCode}');
       }
+    } else {
+      // Fetch N chunks concurrently and write each at its fixed offset (every
+      // plaintext chunk is exactly 1 MB except the last), so out-of-order
+      // completion still reassembles byte-exactly. A 1-permit lock serialises
+      // the seek+write critical section. At most N decrypted chunks are live.
+      final raf = await File(targetPath).open(mode: FileMode.write);
+      try {
+        if (fileSize is int && fileSize > 0) {
+          await raf.truncate(fileSize);
+        }
+        final sem = ChunkSemaphore(maxConcurrentChunks);
+        final writeLock = ChunkSemaphore(1);
+        final inflight = <Future<void>>[];
+        Object? firstError;
 
-      final decrypted = await crypto.decryptData(r.bodyBytes, keyBytes);
-      sink.add(decrypted);
+        for (var i = 0; i < chunks; i++) {
+          if (firstError != null) break;
+          await sem.acquire();
+          if (firstError != null) {
+            sem.release();
+            break;
+          }
+          final idx = i;
+          inflight.add(() async {
+            try {
+              final decrypted = await _fetchChunk(host, d, uuid, idx, keyBytes);
+              await writeLock.acquire();
+              try {
+                await raf.setPosition(idx * _kDownloadChunkSize);
+                await raf.writeFrom(decrypted);
+              } finally {
+                writeLock.release();
+              }
+              bytesDownloaded += decrypted.length;
+              if (onProgress != null) onProgress(bytesDownloaded, fileSize);
+            } catch (e) {
+              firstError ??= e;
+            } finally {
+              sem.release();
+            }
+          }());
+        }
 
-      bytesDownloaded += decrypted.length;
-      if (onProgress != null) {
-        onProgress(bytesDownloaded, fileSize);
+        await Future.wait(inflight);
+        if (firstError != null) throw firstError!;
+      } finally {
+        await raf.close();
       }
     }
-
-    await sink.close();
 
     return {
       'data': await File(targetPath).readAsBytes(),

@@ -164,8 +164,12 @@ class FilenClient {
     String? modificationTime,
     String? resumeUploadKey,
     int resumeFromChunk = 0,
+    Set<int>? completedChunks,
+    String? fileKey,
+    int maxConcurrentChunks = kDefaultUploadConcurrency,
     Function(int, int, int, int)? onProgress,
-    Function(String, String)? onUploadStart,
+    Function(String, String, String)? onUploadStart,
+    void Function(Set<int>)? onChunksCompleted,
   }) =>
       uploader.uploadFileChunked(file, parent,
           fileUuid: fileUuid,
@@ -173,8 +177,12 @@ class FilenClient {
           modificationTime: modificationTime,
           resumeUploadKey: resumeUploadKey,
           resumeFromChunk: resumeFromChunk,
+          completedChunks: completedChunks,
+          fileKey: fileKey,
+          maxConcurrentChunks: maxConcurrentChunks,
           onProgress: onProgress,
-          onUploadStart: onUploadStart);
+          onUploadStart: onUploadStart,
+          onChunksCompleted: onChunksCompleted);
 
   Future<void> uploadFile(File file, String parent,
           {String? creationTime, String? modificationTime}) =>
@@ -182,8 +190,10 @@ class FilenClient {
           creationTime: creationTime, modificationTime: modificationTime);
 
   Future<void> uploadBytes(Uint8List data, String fileName, String parentUuid,
-          {Function(int, int)? onProgress}) =>
-      uploader.uploadBytes(data, fileName, parentUuid, onProgress: onProgress);
+          {int maxConcurrentChunks = kDefaultUploadConcurrency,
+          Function(int, int)? onProgress}) =>
+      uploader.uploadBytes(data, fileName, parentUuid,
+          maxConcurrentChunks: maxConcurrentChunks, onProgress: onProgress);
 
   Future<void> upload(
     List<String> sources,
@@ -210,12 +220,19 @@ class FilenClient {
           onFileProgress: onFileProgress);
 
   Future<Uint8List> downloadFileBytes(String uuid,
-          {Function(int, int)? onProgress}) =>
-      downloader.downloadFileBytes(uuid, onProgress: onProgress);
+          {int maxConcurrentChunks = kDefaultDownloadConcurrency,
+          Function(int, int)? onProgress}) =>
+      downloader.downloadFileBytes(uuid,
+          maxConcurrentChunks: maxConcurrentChunks, onProgress: onProgress);
 
   Future<Map<String, dynamic>> downloadFile(String uuid,
-          {String? savePath, Function(int, int)? onProgress}) =>
-      downloader.downloadFile(uuid, savePath: savePath, onProgress: onProgress);
+          {String? savePath,
+          int maxConcurrentChunks = kDefaultDownloadConcurrency,
+          Function(int, int)? onProgress}) =>
+      downloader.downloadFile(uuid,
+          savePath: savePath,
+          maxConcurrentChunks: maxConcurrentChunks,
+          onProgress: onProgress);
 
   Future<void> downloadPath(
     String remotePath, {

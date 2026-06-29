@@ -156,7 +156,7 @@ void main() {
         await uploader.uploadFileChunked(
           tempFile,
           'parent-uuid',
-          onUploadStart: (uuid, key) {
+          onUploadStart: (uuid, key, fileKey) {
             capturedUuid = uuid;
             capturedKey = key;
           },

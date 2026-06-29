@@ -13,6 +13,7 @@ This CLI provides comprehensive file management capabilities with batch operatio
 * **📂 Path Resolution:** Use standard file paths (e.g., `/Documents/Report.pdf`) instead of raw UUIDs
 * **💾 Intelligent Caching:** 10-minute cache for folder/file listings with automatic invalidation on mutations
 * **🔄 Batch Operations:** Resume interrupted uploads/downloads with chunk-level state persistence
+* **🚀 Bounded Chunk Concurrency:** Uploads and downloads transfer multiple 1 MB chunks in parallel, bounded by a semaphore + memory budget (`maxConcurrentChunks`, default 4). In-order hashing and set-based resume are preserved; tiny files stay sequential.
 * **⚡ Retry Logic:** Automatic retry with exponential backoff for network and server errors (5xx)
 * **✅ Integrity Verification:** SHA-512 hash verification without downloading files
 * **🌐 WebDAV Server:** Mount your Filen drive as a local network drive
