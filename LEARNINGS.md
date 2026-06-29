@@ -148,3 +148,39 @@ N concurrent chunks ≈ N×(1 MB plaintext + 1 MB encrypted) live at once.
 `ChunkSemaphore` caps the count; `MemoryGate` caps the bytes — the latter is
 what protects mobile (CrispCloud), where the count alone says nothing about
 memory pressure.
+
+## Performance — file-level (batch) concurrency (Step 2)
+
+### Cap the PRODUCT with one shared budget, not just W
+Running W files at once where each file already overlaps N chunks puts ~W×N
+chunks in flight. Bounding W alone (or per-file N alone) doesn't bound the
+product. The fix that composes cleanly with Step 1: ONE shared
+`ChunkSemaphore(kGlobalMaxInflightChunks)` threaded into every per-file transfer
+as `globalChunkSlots`; every chunk POST/GET takes a permit on **both** the
+sequential and concurrent code paths. Then W×(per-file degree) can never exceed
+the shared budget no matter how the two combine — even the `maxWorkers >= budget`
+case where each file falls back to its sequential path.
+
+### Gate the sequential chunk path too, or the budget leaks
+Lowering per-file `maxConcurrentChunks` to `GLOBAL // W` makes small W fine, but
+once `W >= GLOBAL` the per-file degree rounds to 1 and each file takes the
+*sequential* path. If only the concurrent path acquires the shared budget, W
+sequential files run W chunks unbudgeted. The shared semaphore must wrap the
+chunk call on **every** path.
+
+### The shared async save is the race, not the in-memory state
+Dart is single-threaded, so concurrent files don't corrupt `batchState` in
+memory — but the async `saveStateCallback` (a file write) can interleave between
+`await` points. Serialize it behind a 1-permit `ChunkSemaphore` mutex. (Python's
+threaded port needs more: pre-declare every task key so a worker's
+`task['fileKey'] = …` can't resize a dict mid-`json.dumps` in another thread's
+save.)
+
+### Pre-create parent folders before fan-out, don't lock per-file
+`createFolderRecursive` mutates the shared path cache and can double-create a
+folder if two files in the same dir race it. Cleaner than locking every call:
+resolve the unique parent dirs once, sequentially, before dispatching the file
+pool. A side benefit surfaced in testing — a fault injected on "the Nth POST"
+hit a folder-creation POST, which the on-demand retry absorbed, so the test
+passed spuriously. Target chunk POSTs explicitly when simulating mid-transfer
+failure.
