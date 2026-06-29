@@ -72,8 +72,8 @@ class FlakyClient extends http.BaseClient {
 /// (apiKey + master keys, no password needed).
 FilenClient liveClientWith(http.Client httpClient) {
   final tempDir = Directory.systemTemp.createTempSync('filen_live_conc_');
-  final client =
-      FilenClient(config: ConfigService(configPath: tempDir.path), httpClient: httpClient);
+  final client = FilenClient(
+      config: ConfigService(configPath: tempDir.path), httpClient: httpClient);
   final file = File(savedCredentialsPath());
   final creds = json.decode(file.readAsStringSync()) as Map<String, dynamic>;
   client.setAuth(creds);

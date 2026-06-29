@@ -105,8 +105,8 @@ class FilenDownload {
     final host = 'https://egest.filen.io';
     final fileSize = meta['size'] ?? 0;
 
-    final useConcurrency = maxConcurrentChunks > 1 &&
-        chunks > kSequentialDownloadChunkThreshold;
+    final useConcurrency =
+        maxConcurrentChunks > 1 && chunks > kSequentialDownloadChunkThreshold;
 
     int bytesDownloaded = 0;
 
@@ -162,8 +162,8 @@ class FilenDownload {
   }
 
   /// Fetch + decrypt a single chunk through the pooled client.
-  Future<Uint8List> _fetchChunk(String host, dynamic d, String uuid, int i,
-      Uint8List keyBytes) async {
+  Future<Uint8List> _fetchChunk(
+      String host, dynamic d, String uuid, int i, Uint8List keyBytes) async {
     final r = await api.client
         .get(Uri.parse('$host/${d['region']}/${d['bucket']}/$uuid/$i'));
     if (r.statusCode != 200) {
@@ -200,8 +200,8 @@ class FilenDownload {
     final targetPath = savePath ?? filename;
 
     // Tiny files keep the simple sequential streaming path.
-    final useConcurrency = maxConcurrentChunks > 1 &&
-        chunks > kSequentialDownloadChunkThreshold;
+    final useConcurrency =
+        maxConcurrentChunks > 1 && chunks > kSequentialDownloadChunkThreshold;
 
     int bytesDownloaded = 0;
 

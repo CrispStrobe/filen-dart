@@ -228,7 +228,8 @@ void main() {
       }
       final chunks = encChunks.length;
 
-      final meta = json.encode({'name': 'f.bin', 'size': blob.length, 'key': keyStr});
+      final meta =
+          json.encode({'name': 'f.bin', 'size': blob.length, 'key': keyStr});
       final mock = MockClient((request) async {
         if (request.url.path.contains('/v3/file')) {
           // Return metadata encrypted under the master key the drive holds.

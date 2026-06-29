@@ -54,7 +54,8 @@ void main() {
 
         // The chunk upload endpoint must have been observed by the pooled
         // client — proof the chunk traffic no longer bypasses api.client.
-        expect(seen.any((s) => s.startsWith('POST') && s.contains('/v3/upload')),
+        expect(
+            seen.any((s) => s.startsWith('POST') && s.contains('/v3/upload')),
             isTrue,
             reason: 'chunk POST should flow through the pooled api.client');
         // And it must be the real chunk endpoint, not the empty-file shortcut.
@@ -66,8 +67,8 @@ void main() {
     });
 
     test('FilenApi exposes a single reused client instance', () {
-      final mockClient = MockClient(
-          (request) async => http.Response('{}', 200));
+      final mockClient =
+          MockClient((request) async => http.Response('{}', 200));
       final api = FilenApi(client: mockClient);
 
       // The same client object every time — callers (chunk transfers) reuse it

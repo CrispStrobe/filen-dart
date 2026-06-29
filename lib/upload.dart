@@ -87,8 +87,7 @@ class FilenUpload {
             // flight, no per-chunk system-memory polling. 64 MB comfortably
             // holds the default 4–8 chunks (~2 MB each) without constraining
             // the degree, and is modest enough for mobile.
-            MemoryGate(
-                maxBytes: 64 * 1024 * 1024, safetyMarginBytes: 0);
+            MemoryGate(maxBytes: 64 * 1024 * 1024, safetyMarginBytes: 0);
 
   List<String> get masterKeys => drive.masterKeys;
   String get email => drive.email;
