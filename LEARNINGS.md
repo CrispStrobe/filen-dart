@@ -114,3 +114,37 @@ CrispCloud uses `CloudStorageClient` as an abstract interface with
 `WebDavClientAdapter`. Each adapter translates between the generic
 interface and the protocol-specific client. This made swapping from an
 embedded copy to a library dependency a 3-file change.
+
+## Performance — bounded chunk concurrency (Step 1)
+
+### The running hash is the one thing you cannot parallelize
+The whole-file integrity hash is a SHA-512 over **plaintext chunks in order**.
+The pattern that keeps it correct: a *sequential* producer reads + hashes each
+chunk in order (cheap — disk + CPU), and only the slow network POST is handed
+to the bounded pool. Verified by asserting a parallel upload yields the exact
+same hash as the sequential path.
+
+### Resume must become a SET, not a high-water mark
+With chunks completing out of order, "all chunks < N are done" is false.
+`ChunkUploadException` now carries `completedChunks` (the exact set) and resume
+skips precisely those indices. `lastSuccessfulChunk` survives only as the
+contiguous-prefix max for backward-compatible callers.
+
+### Resume must reuse the original file key (latent pre-existing bug)
+Each chunk is AES-GCM-encrypted with the file key. The old resume path
+generated a *fresh* key on restart, which would have made the
+already-uploaded chunks undecryptable. Fixed by threading `fileKey` through
+`ChunkUploadException` → batch state → `uploadFileChunked`.
+
+### Per-chunk gating must not poll system memory
+`MemoryGate.acquire` spawned a `vm_stat` subprocess (macOS) on every call —
+fine per-file, but per-chunk it both serialized dispatch (killing the overlap)
+and was slow. `safetyMarginBytes: 0` now makes the gate a pure fixed byte
+budget with no system poll; that is the per-chunk default. Bound concurrency by
+**both** a count semaphore and the byte budget.
+
+### Bound by BYTES in flight, not Future count
+N concurrent chunks ≈ N×(1 MB plaintext + 1 MB encrypted) live at once.
+`ChunkSemaphore` caps the count; `MemoryGate` caps the bytes — the latter is
+what protects mobile (CrispCloud), where the count alone says nothing about
+memory pressure.

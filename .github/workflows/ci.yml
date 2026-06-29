@@ -1,49 +1,69 @@
 name: CI
 
+# Analyze + format + unit tests on every push to main and every PR, plus a
+# coverage gate and a compiled-binary smoke check. Live tests (real Filen
+# backend) are tagged `live` and hard-skipped here — no account creds in CI.
+
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   analyze:
+    name: Analyze + format
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
       - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+      - run: dart --version
       - run: dart pub get
-      - run: dart analyze --fatal-infos
-      - run: dart format --set-exit-if-changed .
+      - name: dart analyze (fatal infos)
+        run: dart analyze --fatal-infos
+      - name: dart format (no changes expected)
+        run: dart format --output=none --set-exit-if-changed .
 
   test:
+    name: Unit tests + coverage gate
     runs-on: ubuntu-latest
     needs: analyze
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
       - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
       - run: dart pub get
-      - name: Run unit tests with coverage
+      - name: Run unit tests with coverage (live excluded)
         run: dart test --coverage=coverage --exclude-tags=live
-      - name: Format coverage
+      - name: Format coverage to lcov
         run: |
-          dart pub global activate coverage
-          dart pub global run coverage:format_coverage \
+          dart run coverage:format_coverage \
             --lcov \
             --in=coverage \
             --out=coverage/lcov.info \
+            --packages=.dart_tool/package_config.json \
             --report-on=lib
-      - name: Check per-file coverage thresholds
+      - name: Coverage gate (per-file thresholds)
         run: dart run tool/check_coverage.dart coverage/lcov.info
 
   compile:
+    name: Compile binary smoke check
     runs-on: ubuntu-latest
     needs: analyze
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
       - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
       - run: dart pub get
       - name: Compile binary
-        run: dart compile exe bin/filen.dart -o filen
+        run: dart compile exe bin/filen.dart -o /tmp/filen
       - name: Smoke check
-        run: ./filen help
+        run: /tmp/filen help | head -5
