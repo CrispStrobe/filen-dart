@@ -65,7 +65,9 @@ class FakeFilenClient extends FilenClient {
 
   @override
   Future<Map<String, dynamic>> downloadFile(String uuid,
-          {String? savePath, Function(int, int)? onProgress}) async =>
+          {String? savePath,
+          int maxConcurrentChunks = kDefaultDownloadConcurrency,
+          Function(int, int)? onProgress}) async =>
       {'data': fileBytes[uuid] ?? Uint8List(0), 'filename': 'x'};
 
   @override

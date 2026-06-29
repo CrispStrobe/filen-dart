@@ -29,14 +29,19 @@ class MemoryGate {
 
   /// Acquire [bytes] worth of memory. Waits if capacity is exceeded.
   Future<void> acquire(int bytes) async {
-    // Check system memory if available
-    final availableMemory = await _getAvailableMemory();
-    if (availableMemory != null &&
-        availableMemory < safetyMarginBytes + bytes) {
-      // Wait for memory to free up
-      final completer = Completer<void>();
-      _waiters.add(_MemoryWaiter(bytes: bytes, completer: completer));
-      return completer.future;
+    // System-memory probing is opt-in: with [safetyMarginBytes] == 0 the gate
+    // is a pure fixed byte budget. That matters for PER-CHUNK gating (Step 1),
+    // where polling system memory on every chunk would spawn a `vm_stat`
+    // subprocess per 1 MB and serialise dispatch — defeating the concurrency.
+    if (safetyMarginBytes > 0) {
+      final availableMemory = await _getAvailableMemory();
+      if (availableMemory != null &&
+          availableMemory < safetyMarginBytes + bytes) {
+        // Wait for memory to free up
+        final completer = Completer<void>();
+        _waiters.add(_MemoryWaiter(bytes: bytes, completer: completer));
+        return completer.future;
+      }
     }
 
     if (_currentBytes + bytes > maxBytes) {
@@ -131,4 +136,39 @@ class _MemoryWaiter {
   final Completer<void> completer;
 
   _MemoryWaiter({required this.bytes, required this.completer});
+}
+
+/// A counting semaphore that bounds the *number* of concurrent in-flight chunk
+/// transfers. Paired with [MemoryGate] (which bounds the bytes in flight),
+/// it caps chunk concurrency by both count and memory — the Step 1 model.
+class ChunkSemaphore {
+  int _permits;
+  final _queue = <Completer<void>>[];
+
+  ChunkSemaphore(this._permits) {
+    if (_permits < 1) _permits = 1;
+  }
+
+  /// Permits currently available (for tests/diagnostics).
+  int get availablePermits => _permits;
+
+  /// Acquire one permit, waiting in FIFO order if none are free.
+  Future<void> acquire() {
+    if (_permits > 0) {
+      _permits--;
+      return Future.value();
+    }
+    final c = Completer<void>();
+    _queue.add(c);
+    return c.future;
+  }
+
+  /// Release one permit, handing it to the next waiter if any.
+  void release() {
+    if (_queue.isNotEmpty) {
+      _queue.removeAt(0).complete();
+    } else {
+      _permits++;
+    }
+  }
 }

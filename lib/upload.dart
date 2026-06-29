@@ -9,7 +9,6 @@ import 'package:crypto/crypto.dart' as crypto_pkg;
 import 'package:glob/glob.dart';
 import 'package:glob/list_local_fs.dart';
 import 'package:hex/hex.dart';
-import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 
 import 'package:filen_dart/api.dart';
@@ -19,12 +18,30 @@ import 'package:filen_dart/drive.dart';
 import 'package:filen_dart/memory_gate.dart';
 import 'package:filen_dart/utils.dart';
 
+/// Chunk transfer concurrency (Step 1). N chunks may be in flight at once,
+/// bounded by both a [ChunkSemaphore] (count) and the [MemoryGate] (bytes), so
+/// at most N×(plaintext + encrypted) chunks are ever live — important on mobile.
+const int kDefaultUploadConcurrency = 4;
+
+/// Files with this many chunks or fewer keep the simple sequential path — no
+/// concurrency machinery is spun up (the overlap win doesn't pay for tiny files).
+const int kSequentialChunkThreshold = 2;
+
 /// Exception for chunk upload failures (carries resume state).
+///
+/// With concurrent uploads, chunks complete out of order, so resume can no
+/// longer assume "all chunks < N are done". [completedChunks] carries the exact
+/// set of indices that succeeded; [lastSuccessfulChunk] is kept as the
+/// contiguous-prefix high-water mark for backward-compatible callers. [fileKey]
+/// must be carried so a resumed upload reuses it — chunks already on the server
+/// were encrypted with it.
 class ChunkUploadException implements Exception {
   final String message;
   final String fileUuid;
   final String uploadKey;
   final int lastSuccessfulChunk;
+  final Set<int> completedChunks;
+  final String? fileKey;
   final Object? originalError;
 
   ChunkUploadException(
@@ -32,12 +49,24 @@ class ChunkUploadException implements Exception {
     required this.fileUuid,
     required this.uploadKey,
     required this.lastSuccessfulChunk,
+    Set<int>? completedChunks,
+    this.fileKey,
     this.originalError,
-  });
+  }) : completedChunks = completedChunks ?? <int>{};
 
   @override
   String toString() => 'ChunkUploadException: $message '
       '(uuid: $fileUuid, uploadKey: $uploadKey, lastChunk: $lastSuccessfulChunk)';
+}
+
+/// Largest M such that chunks 0..M are all in [completed] (else -1). Expresses
+/// an out-of-order completed set as a backward-compatible high-water mark.
+int contiguousCompletedMax(Set<int> completed) {
+  var i = 0;
+  while (completed.contains(i)) {
+    i++;
+  }
+  return i - 1;
 }
 
 class FilenUpload {
@@ -53,7 +82,13 @@ class FilenUpload {
     required this.cache,
     required this.drive,
     MemoryGate? memoryGate,
-  }) : memoryGate = memoryGate ?? MemoryGate();
+  }) : memoryGate = memoryGate ??
+            // Per-chunk byte budget (Step 1): a fixed ceiling on bytes in
+            // flight, no per-chunk system-memory polling. 64 MB comfortably
+            // holds the default 4–8 chunks (~2 MB each) without constraining
+            // the degree, and is modest enough for mobile.
+            MemoryGate(
+                maxBytes: 64 * 1024 * 1024, safetyMarginBytes: 0);
 
   List<String> get masterKeys => drive.masterKeys;
   String get email => drive.email;
@@ -66,9 +101,13 @@ class FilenUpload {
     String? modificationTime,
     String? resumeUploadKey,
     int resumeFromChunk = 0,
+    Set<int>? completedChunks,
+    String? fileKey,
+    int maxConcurrentChunks = kDefaultUploadConcurrency,
     Function(int current, int total, int bytesUploaded, int totalBytes)?
         onProgress,
-    Function(String uuid, String uploadKey)? onUploadStart,
+    Function(String uuid, String uploadKey, String fileKey)? onUploadStart,
+    void Function(Set<int> completed)? onChunksCompleted,
   }) async {
     final name = p.basename(file.path);
     final size = await file.length();
@@ -76,7 +115,10 @@ class FilenUpload {
     final mk = masterKeys.last;
     if (mk.isEmpty) throw Exception('No master keys available');
 
-    final fileKeyStr = crypto.randomString(32);
+    // Reuse the caller-supplied key when resuming so chunks uploaded across
+    // attempts share one key (otherwise already-uploaded chunks would be
+    // undecryptable). Generate a fresh key for new uploads.
+    final fileKeyStr = fileKey ?? crypto.randomString(32);
     final fileKeyBytes = Uint8List.fromList(utf8.encode(fileKeyStr));
 
     var lastMod = modificationTime;
@@ -130,76 +172,141 @@ class FilenUpload {
     // Regular chunked upload
     final uploadKey = resumeUploadKey ?? crypto.randomString(32);
 
-    if (onUploadStart != null && resumeFromChunk == 0) {
-      onUploadStart(uuid, uploadKey);
+    // Resume is a SET of completed indices, not a high-water mark: with
+    // concurrent uploads chunks finish out of order. resumeFromChunk (legacy)
+    // folds in as a contiguous range; completedChunks carries an exact set.
+    final done = <int>{...?completedChunks};
+    if (resumeFromChunk > 0) {
+      for (var i = 0; i < resumeFromChunk; i++) {
+        done.add(i);
+      }
+    }
+
+    if (onUploadStart != null && done.isEmpty) {
+      onUploadStart(uuid, uploadKey, fileKeyStr);
     }
 
     final rm = crypto.randomString(32);
     const chunkSz = 1048576;
     final totalChunks = (size / chunkSz).ceil();
-
     final ingest = 'https://ingest.filen.io';
-    final raf = await file.open();
-    int offset = resumeFromChunk * chunkSz;
-    int index = resumeFromChunk;
 
+    // Running SHA-512 over the *plaintext* chunks, in order — cannot be
+    // parallelized. A sequential producer reads + hashes each chunk in order
+    // (cheap) and hands the slow network POST to the bounded pool.
     final digestSink = DigestSink();
     final byteSink = crypto_pkg.sha512.startChunkedConversion(digestSink);
 
-    try {
-      // If resuming, re-hash previous chunks
-      if (resumeFromChunk > 0) {
-        api.log('Re-hashing previous $resumeFromChunk chunks...');
-        await raf.setPosition(0);
-        for (var i = 0; i < resumeFromChunk; i++) {
-          final len = min(chunkSz, size - (i * chunkSz));
-          final bytes = await raf.read(len);
-          byteSink.add(bytes);
-        }
-        await raf.setPosition(offset);
+    final completed = <int>{...done};
+
+    // POST one already-encrypted chunk; throws on a non-200 response.
+    Future<void> postChunk(int idx, Uint8List enc) async {
+      final hashHex =
+          HEX.encode(crypto_pkg.sha512.convert(enc).bytes).toLowerCase();
+      final url = Uri.parse(
+          '$ingest/v3/upload?uuid=$uuid&index=$idx&parent=$parent&uploadKey=$uploadKey&hash=$hashHex');
+      final r = await api.client.post(url, body: enc, headers: {
+        'Authorization': 'Bearer ${api.apiKey}'
+      }).timeout(Duration(seconds: 30));
+      if (r.statusCode != 200) {
+        throw Exception('Chunk upload failed: ${r.statusCode} - ${r.body}');
       }
+    }
 
-      while (offset < size) {
-        final len = min(chunkSz, size - offset);
-        final bytes = await raf.read(len);
-        byteSink.add(bytes);
-        final encChunk = await crypto.encryptData(bytes, fileKeyBytes);
+    void reportProgress() {
+      if (onProgress != null) {
+        final n = completed.length;
+        onProgress(n, totalChunks, min(n * chunkSz, size), size);
+      }
+      onChunksCompleted?.call(Set.of(completed));
+    }
 
-        final chunkHash = crypto_pkg.sha512.convert(encChunk);
-        final hashHex = HEX.encode(chunkHash.bytes).toLowerCase();
+    ChunkUploadException fail(int idx, Object e) {
+      api.log('Chunk $idx failed: $e');
+      return ChunkUploadException(
+        'Chunk $idx upload failed',
+        fileUuid: uuid,
+        uploadKey: uploadKey,
+        lastSuccessfulChunk: contiguousCompletedMax(completed),
+        completedChunks: Set.of(completed),
+        fileKey: fileKeyStr,
+        originalError: e,
+      );
+    }
 
-        final url = Uri.parse(
-            '$ingest/v3/upload?uuid=$uuid&index=$index&parent=$parent&uploadKey=$uploadKey&hash=$hashHex');
+    // Tiny files (and concurrency disabled) keep the simple sequential path:
+    // no semaphore, no MemoryGate — nothing is spun up.
+    final useConcurrency =
+        maxConcurrentChunks > 1 && totalChunks > kSequentialChunkThreshold;
 
-        if (onProgress != null) {
-          onProgress(index + 1, totalChunks, offset + len, size);
-        } else {
-          final progress = ((index + 1) / totalChunks * 100).toStringAsFixed(1);
-          stdout.write(
-              '     Uploading... ${index + 1}/$totalChunks chunks ($progress%)  \r');
-        }
+    final raf = await file.open();
+    try {
+      if (useConcurrency) {
+        // N chunk Futures in flight, bounded by BOTH a count semaphore and the
+        // byte-budget MemoryGate (≈ N×(plaintext+encrypted) live at once).
+        final sem = ChunkSemaphore(maxConcurrentChunks);
+        final inflight = <Future<void>>[];
+        final errors = <MapEntry<int, Object>>[];
 
-        try {
-          final r = await http.post(url, body: encChunk, headers: {
-            'Authorization': 'Bearer ${api.apiKey}'
-          }).timeout(Duration(seconds: 30));
+        var idx = 0;
+        var off = 0;
+        while (off < size) {
+          final len = min(chunkSz, size - off);
+          final bytes = await raf.read(len);
+          byteSink.add(bytes); // in-order plaintext hash (sequential producer)
+          off += len;
+          final myIdx = idx++;
+          if (done.contains(myIdx)) continue;
+          if (errors.isNotEmpty) break;
 
-          if (r.statusCode != 200) {
-            throw Exception('Chunk upload failed: ${r.statusCode} - ${r.body}');
+          await sem.acquire(); // bound concurrency by count
+          if (errors.isNotEmpty) {
+            sem.release();
+            break;
           }
-        } catch (e) {
-          api.log('Chunk $index failed: $e');
-          throw ChunkUploadException(
-            'Chunk $index upload failed',
-            fileUuid: uuid,
-            uploadKey: uploadKey,
-            lastSuccessfulChunk: index - 1,
-            originalError: e,
-          );
+          final enc = await crypto.encryptData(bytes, fileKeyBytes);
+          final budget = bytes.length + enc.length; // plaintext + encrypted
+          await memoryGate.acquire(budget); // bound concurrency by bytes
+
+          inflight.add(() async {
+            try {
+              await postChunk(myIdx, enc);
+              completed.add(myIdx);
+              reportProgress();
+            } catch (e) {
+              errors.add(MapEntry(myIdx, e));
+            } finally {
+              memoryGate.release(budget);
+              sem.release();
+            }
+          }());
         }
 
-        offset += len;
-        index++;
+        await Future.wait(inflight); // join all in-flight workers
+        if (errors.isNotEmpty) {
+          errors.sort((a, b) => a.key.compareTo(b.key));
+          throw fail(errors.first.key, errors.first.value);
+        }
+      } else {
+        var idx = 0;
+        var off = 0;
+        while (off < size) {
+          final len = min(chunkSz, size - off);
+          final bytes = await raf.read(len);
+          byteSink.add(bytes); // in-order plaintext hash
+          off += len;
+          final myIdx = idx++;
+          if (done.contains(myIdx)) continue;
+
+          final enc = await crypto.encryptData(bytes, fileKeyBytes);
+          try {
+            await postChunk(myIdx, enc);
+          } catch (e) {
+            throw fail(myIdx, e);
+          }
+          completed.add(myIdx);
+          reportProgress();
+        }
       }
 
       print('');
@@ -232,7 +339,7 @@ class FilenUpload {
         'name': nameEncrypted,
         'nameHashed': nameHashed,
         'size': sizeEncrypted,
-        'chunks': index,
+        'chunks': totalChunks,
         'mime': mimeEncrypted,
         'rm': rm,
         'metadata': metadataEncryptedWithHash,
@@ -397,9 +504,9 @@ class FilenUpload {
 
       if (!shouldUpload) continue;
 
-      final fileSize = await localFile.length();
-      await memoryGate.acquire(fileSize);
-
+      // Memory is gated PER-CHUNK inside uploadFileChunked now (Step 1), not
+      // per-file here — so many small files no longer each reserve their full
+      // size up front.
       try {
         String? cTime, mTime;
         if (preserveTimestamps) {
@@ -407,6 +514,17 @@ class FilenUpload {
           mTime = stat.modified.millisecondsSinceEpoch.toString();
           cTime = stat.changed.millisecondsSinceEpoch.toString();
         }
+
+        // Resume from the completed SET (legacy lastChunk folds into it).
+        final resumeCompleted = <int>{
+          ...((task['completedChunks'] as List?)?.cast<int>() ?? const []),
+        };
+        if ((task['lastChunk'] ?? -1) >= 0) {
+          for (var i = 0; i <= (task['lastChunk'] as int); i++) {
+            resumeCompleted.add(i);
+          }
+        }
+        final isResuming = resumeCompleted.isNotEmpty;
 
         task['status'] = 'uploading';
         await saveStateCallback(batchState);
@@ -416,17 +534,23 @@ class FilenUpload {
           parentInfo['uuid'],
           fileUuid: task['fileUuid'],
           resumeUploadKey: task['uploadKey'],
-          resumeFromChunk: (task['lastChunk'] ?? -1) + 1,
+          fileKey: isResuming ? task['fileKey'] : null,
+          completedChunks: isResuming ? resumeCompleted : null,
           creationTime: cTime,
           modificationTime: mTime,
-          onUploadStart: (uuid, key) {
+          onUploadStart: (uuid, key, fkey) {
             task['fileUuid'] = uuid;
             task['uploadKey'] = key;
+            task['fileKey'] = fkey;
             task['lastChunk'] = -1;
+            task['completedChunks'] = <int>[];
             saveStateCallback(batchState);
           },
-          onProgress: (cur, tot, bUp, bTot) {
-            task['lastChunk'] = cur - 1;
+          // Chunks complete out of order: persist the exact set plus a
+          // contiguous-safe high-water mark for legacy resume.
+          onChunksCompleted: (completed) {
+            task['completedChunks'] = completed.toList()..sort();
+            task['lastChunk'] = contiguousCompletedMax(completed);
           },
         );
 
@@ -434,13 +558,22 @@ class FilenUpload {
         task['status'] = 'completed';
         task['fileUuid'] = null;
         task['uploadKey'] = null;
+        task['fileKey'] = null;
         task['lastChunk'] = -1;
+        task['completedChunks'] = <int>[];
+      } on ChunkUploadException catch (e) {
+        if (api.debugMode) print("\n❌ Upload error: $e");
+        errorCount++;
+        task['fileUuid'] = e.fileUuid;
+        task['uploadKey'] = e.uploadKey;
+        task['fileKey'] = e.fileKey;
+        task['completedChunks'] = e.completedChunks.toList()..sort();
+        task['lastChunk'] = e.lastSuccessfulChunk;
+        task['status'] = 'interrupted';
       } catch (e) {
         if (api.debugMode) print("\n❌ Upload error: $e");
         errorCount++;
         task['status'] = 'interrupted';
-      } finally {
-        memoryGate.release(fileSize);
       }
 
       await saveStateCallback(batchState);
@@ -535,6 +668,7 @@ class FilenUpload {
     Uint8List data,
     String fileName,
     String parentUuid, {
+    int maxConcurrentChunks = kDefaultUploadConcurrency,
     Function(int bytesUploaded, int totalBytes)? onProgress,
   }) async {
     api.log(
@@ -586,46 +720,95 @@ class FilenUpload {
     final rm = crypto.randomString(32);
     const chunkSz = 1048576;
     final ingest = 'https://ingest.filen.io';
-
-    int offset = 0;
-    int index = 0;
+    final totalChunks = (size / chunkSz).ceil();
 
     final digestSink = DigestSink();
     final byteSink = crypto_pkg.sha512.startChunkedConversion(digestSink);
 
-    while (offset < size) {
-      final end = min(size, offset + chunkSz);
-      final chunkBytes = data.sublist(offset, end);
-      byteSink.add(chunkBytes);
-
-      final encChunk = await crypto.encryptData(chunkBytes, fileKeyBytes);
-      final chunkHash = crypto_pkg.sha512.convert(encChunk);
-      final hashHex = HEX.encode(chunkHash.bytes).toLowerCase();
-
+    // POST one already-encrypted chunk with up to 3 retries; throws if all fail.
+    Future<void> postChunk(int idx, Uint8List enc) async {
+      final hashHex =
+          HEX.encode(crypto_pkg.sha512.convert(enc).bytes).toLowerCase();
       final url = Uri.parse(
-          '$ingest/v3/upload?uuid=$uuid&index=$index&parent=$parentUuid&uploadKey=$uploadKey&hash=$hashHex');
-
-      int retry = 0;
-      while (retry < 3) {
+          '$ingest/v3/upload?uuid=$uuid&index=$idx&parent=$parentUuid&uploadKey=$uploadKey&hash=$hashHex');
+      var retry = 0;
+      while (true) {
         try {
-          final r = await http.post(url, body: encChunk, headers: {
+          final r = await api.client.post(url, body: enc, headers: {
             'Authorization': 'Bearer ${api.apiKey}'
           }).timeout(Duration(seconds: 45));
           if (r.statusCode != 200) {
             throw Exception('Status ${r.statusCode}: ${r.body}');
           }
-          break;
+          return;
         } catch (e) {
           retry++;
-          api.log('Chunk failed (Attempt $retry): $e');
+          api.log('Chunk $idx failed (Attempt $retry): $e');
           if (retry >= 3) rethrow;
           await Future.delayed(Duration(seconds: 1));
         }
       }
+    }
 
-      offset += chunkBytes.length;
-      index++;
-      if (onProgress != null) onProgress(offset, size);
+    // Tiny files keep the simple sequential path; larger ones overlap chunks
+    // bounded by both the semaphore (count) and MemoryGate (bytes).
+    final useConcurrency =
+        maxConcurrentChunks > 1 && totalChunks > kSequentialChunkThreshold;
+    var doneBytes = 0;
+
+    if (useConcurrency) {
+      final sem = ChunkSemaphore(maxConcurrentChunks);
+      final inflight = <Future<void>>[];
+      Object? firstError;
+
+      var offset = 0;
+      var index = 0;
+      while (offset < size) {
+        final end = min(size, offset + chunkSz);
+        final chunkBytes = data.sublist(offset, end);
+        byteSink.add(chunkBytes); // in-order plaintext hash
+        offset = end;
+        final myIdx = index++;
+        if (firstError != null) break;
+
+        await sem.acquire();
+        if (firstError != null) {
+          sem.release();
+          break;
+        }
+        final enc = await crypto.encryptData(chunkBytes, fileKeyBytes);
+        final budget = chunkBytes.length + enc.length;
+        await memoryGate.acquire(budget);
+
+        inflight.add(() async {
+          try {
+            await postChunk(myIdx, enc);
+            doneBytes += chunkBytes.length;
+            if (onProgress != null) onProgress(doneBytes, size);
+          } catch (e) {
+            firstError ??= e;
+          } finally {
+            memoryGate.release(budget);
+            sem.release();
+          }
+        }());
+      }
+
+      await Future.wait(inflight);
+      if (firstError != null) throw firstError!;
+    } else {
+      var offset = 0;
+      var index = 0;
+      while (offset < size) {
+        final end = min(size, offset + chunkSz);
+        final chunkBytes = data.sublist(offset, end);
+        byteSink.add(chunkBytes); // in-order plaintext hash
+        offset = end;
+        final enc = await crypto.encryptData(chunkBytes, fileKeyBytes);
+        await postChunk(index++, enc);
+        doneBytes += chunkBytes.length;
+        if (onProgress != null) onProgress(doneBytes, size);
+      }
     }
 
     byteSink.close();
@@ -654,7 +837,7 @@ class FilenUpload {
       'name': nameEncrypted,
       'nameHashed': nameHashed,
       'size': sizeEncrypted,
-      'chunks': index,
+      'chunks': totalChunks,
       'mime': mimeEncrypted,
       'rm': rm,
       'metadata': metadataEncryptedWithHash,
