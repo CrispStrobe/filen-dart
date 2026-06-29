@@ -591,33 +591,33 @@ Goal: N chunks in flight (start N=4–8), **semaphore-bounded** — never unboun
 
 Skip concurrency for **tiny files** (≤ a few chunks) — branch on size.
 
-## Step 2 — file-level concurrency ⬜ TODO (sync / many small files)
+## Step 2 — file-level concurrency ✅ DONE & TESTED
 Parallelize whole FILES in batch directory upload/download — the bigger real-world win
-when syncing many files. Reference: internxt-dart already does this (`lib/upload.dart`
-`runWithConcurrency` pool + `MemoryGate`, `workers=4`) — port that pattern; filen's own
-`ChunkSemaphore` / `MemoryGate` (Step 1) compose with it.
+when syncing many files. Ported internxt-dart's `runWithConcurrency` pool; filen's own
+`ChunkSemaphore` / `MemoryGate` (Step 1) compose underneath.
 
-Files/functions:
-- `lib/upload.dart` → `upload(...)` batch loop (the `for (int i = 0; i < totalTasks;
-  i++)` over tasks). Dispatch up to W files concurrently (a `ChunkSemaphore(W)` or an
-  internxt-dart-style `runWithConcurrency`). Each file ALSO uses Step 1 chunk
-  concurrency, so cap the PRODUCT W×N by passing ONE shared `MemoryGate` instance into
-  every per-file `uploadFileChunked` (it is already a per-chunk byte budget) and
-  lowering `maxConcurrentChunks` when W>1.
-- `lib/download.dart` → `downloadPath(...)` batch loop: same treatment.
-
-CONSTRAINTS:
-1. `batchState` + `saveStateCallback` are shared — serialize task-status writes
-   (`saveStateCallback` is async; guard with a mutex / 1-permit `ChunkSemaphore`).
-2. Cap TOTAL bytes in flight across files × chunks with ONE shared `MemoryGate`, not one
-   per file (mobile / CrispCloud).
-3. Conflict-check + `createFolderRecursive` per file must stay correct under concurrency;
-   progress output must stay readable.
-
-Tests (mirror `test/chunk_concurrency_test.dart` + `test/concurrency_live_test.dart`):
-Unit (MockClient): batch never exceeds W files AND the shared byte budget; state writes
-race-free. Live (`--tags live --run-skipped`): a many-file directory round-trips + is
-faster than W=1. `dart analyze lib/` clean; coverage gate passes.
+- `lib/memory_gate.dart`: new `runWithConcurrency(items, W, action)` (a `ChunkSemaphore`
+  gates how many item futures run) + `kDefaultFileConcurrency` (=4) /
+  `kGlobalMaxInflightChunks` (=8) constants.
+- `lib/upload.dart` → `upload(...)`: the per-file body is now `_uploadTask` (returns a
+  'completed'/'skipped'/'error'/'already' token). For `maxWorkers > 1` and >1 pending
+  file it dispatches via `runWithConcurrency`; a single file or `maxWorkers <= 1` keeps
+  the sequential path. `lib/download.dart` → `downloadPath(...)` got the same treatment
+  via `_downloadTask`. `maxWorkers` is threaded through the `FilenClient` facade.
+- **Shared budget (constraint 2):** ONE `ChunkSemaphore(kGlobalMaxInflightChunks)` is
+  passed into every per-file `uploadFileChunked` / `downloadFile` as `globalChunkSlots`.
+  Every chunk POST/GET — sequential AND concurrent path — takes one permit, so the
+  PRODUCT (W × N) is hard-bounded. Per-file `maxConcurrentChunks` is also lowered to
+  `GLOBAL ~/ W`. (The per-chunk `MemoryGate` still bounds bytes within each file.)
+- **Race-free state (constraint 1):** the async `saveStateCallback` is serialized under a
+  1-permit `ChunkSemaphore` mutex.
+- **Shared side effects (constraint 3):** unique parent folders are pre-created ONCE
+  before fan-out; conflict checks are reads only.
+- **Progress (constraint 4):** a single running counter line.
+- Tests: `test/file_concurrency_test.dart` (6 unit) + `test/concurrency_live_test.dart`
+  (2 new live). `dart analyze` clean, `dart format` clean, coverage gate passes
+  (memory_gate covered by the new `runWithConcurrency` tests). Live batch upload measured
+  faster than the W=1 baseline.
 
 ## Test matrix — unit + live for everything
 Unit (hermetic; MockClient):
@@ -633,6 +633,19 @@ Live (real backend, saved `~/.filen-cli` session, `--tags live --run-skipped`):
 - [x] interrupted upload resumes and completes (kill mid-way, restart)
 - [x] concurrent throughput sanity (large file faster than sequential baseline)
 - [x] directory of many small files round-trips
+
+## Step 2 test matrix (file-level concurrency)
+Unit (`test/file_concurrency_test.dart`, hermetic / MockClient):
+- [x] `runWithConcurrency` bounds in-flight items to W and runs them all
+- [x] ONE shared budget caps chunk POSTs across MORE files than it admits (upload)
+- [x] ONE shared budget caps chunk GETs across concurrent files (download)
+- [x] batch `upload()` never exceeds W concurrent files (peak ≤ W)
+- [x] batch `upload()` peak chunk POSTs never exceed the global budget
+- [x] single-file / maxWorkers<=1 stays strictly sequential (peak == 1)
+Live (`test/concurrency_live_test.dart`, `--tags live --run-skipped`):
+- [x] directory of many files round-trips byte-exact under concurrency
+- [x] many-file directory upload is FASTER than the W=1 baseline
+- [x] interrupted batch resumes correctly with concurrent files in flight
 
 ## Order of work
 Step 0 (done) → Step 1 in **filen-python first** (simpler: ThreadPoolExecutor) →

@@ -236,4 +236,128 @@ void main() {
           reason: '${entry.key} content mismatch');
     }
   });
+
+  // --- Step 2: file-level (batch) concurrency ----------------------------
+
+  test('batch concurrent upload beats the W=1 baseline', () async {
+    // Many smallish files: per-file connection/finalize overhead dominates, so
+    // overlapping whole files should clearly beat the sequential baseline.
+    final src = Directory('${tmp.path}/speed_batch')..createSync();
+    for (var i = 0; i < 16; i++) {
+      await randomFile(
+          '${src.path}/f${i.toString().padLeft(2, '0')}.bin', 256 * 1024);
+    }
+    Future<void> noop(Map<String, dynamic> _) async {}
+
+    final t0 = DateTime.now();
+    await client.upload([src.path], '$folderPath/batch_seq',
+        recursive: true,
+        onConflict: 'overwrite',
+        preserveTimestamps: false,
+        include: const [],
+        exclude: const [],
+        batchId: 'batch-seq',
+        saveStateCallback: noop,
+        maxWorkers: 1);
+    final seqMs = DateTime.now().difference(t0).inMilliseconds;
+
+    final t1 = DateTime.now();
+    await client.upload([src.path], '$folderPath/batch_par',
+        recursive: true,
+        onConflict: 'overwrite',
+        preserveTimestamps: false,
+        include: const [],
+        exclude: const [],
+        batchId: 'batch-par',
+        saveStateCallback: noop,
+        maxWorkers: 6);
+    final parMs = DateTime.now().difference(t1).inMilliseconds;
+
+    print('[batch throughput] sequential=${seqMs}ms  concurrent(6)=${parMs}ms  '
+        'speedup=${(seqMs / parMs).toStringAsFixed(2)}x');
+    expect(parMs, lessThan(seqMs),
+        reason: 'concurrent batch upload should beat the sequential baseline');
+  });
+
+  test('interrupted batch resumes with concurrent files in flight', () async {
+    // A directory of multi-chunk files uploaded concurrently; one chunk POST
+    // fails mid-flight, interrupting a file. Resuming the batch (several files
+    // still in flight) must complete and round-trip byte-exact.
+    final src = Directory('${tmp.path}/resume_batch')..createSync();
+    final expected = <String, String>{};
+    for (var i = 0; i < 5; i++) {
+      final name = 'r${i.toString().padLeft(2, '0')}.bin';
+      final f = await randomFile('${src.path}/$name', 3 * mb + 7); // 4 chunks
+      expected[name] = sha512Hex(await f.readAsBytes());
+    }
+    final remoteDir = '$folderPath/resume_batch_up';
+
+    Map<String, dynamic>? savedState;
+    Future<void> capture(Map<String, dynamic> s) async {
+      savedState = json.decode(json.encode(s)) as Map<String, dynamic>;
+    }
+
+    // Fail the 3rd chunk POST (mid-batch). The flaky client shares the saved
+    // session, so the interrupted state is persisted via [capture].
+    final flaky = liveClientWith(FlakyClient(failAtPost: 3));
+    try {
+      await flaky.upload([src.path], remoteDir,
+          recursive: true,
+          onConflict: 'overwrite',
+          preserveTimestamps: false,
+          include: const [],
+          exclude: const [],
+          batchId: 'resume-batch',
+          saveStateCallback: capture,
+          maxWorkers: 4);
+      fail('expected the interrupted batch to throw');
+    } catch (_) {
+      // expected — at least one file was interrupted
+    }
+
+    expect(savedState, isNotNull, reason: 'state must have been persisted');
+    final statuses = [
+      for (final t in savedState!['tasks'] as List) t['status'] as String
+    ];
+    expect(
+        statuses.any((s) => s == 'interrupted' || s == 'error_upload'), isTrue,
+        reason: 'expected an interrupted task, got $statuses');
+
+    // Resume the batch on the healthy client with concurrency.
+    await client.upload([src.path], remoteDir,
+        recursive: true,
+        onConflict: 'skip',
+        preserveTimestamps: false,
+        include: const [],
+        exclude: const [],
+        batchId: 'resume-batch',
+        initialBatchState: savedState,
+        saveStateCallback: capture,
+        maxWorkers: 4);
+
+    // Download and verify every file is byte-exact.
+    final dest = Directory('${tmp.path}/resume_batch_down')..createSync();
+    Future<void> noop(Map<String, dynamic> _) async {}
+    await client.downloadPath('$remoteDir/resume_batch',
+        localDestination: dest.path,
+        recursive: true,
+        onConflict: 'overwrite',
+        preserveTimestamps: false,
+        include: const [],
+        exclude: const [],
+        batchId: 'resume-batch-down',
+        saveStateCallback: noop,
+        maxWorkers: 4);
+
+    final got = <String, String>{};
+    for (final e in dest.listSync(recursive: true)) {
+      if (e is File) got[p.basename(e.path)] = sha512Hex(e.readAsBytesSync());
+    }
+    for (final entry in expected.entries) {
+      expect(got.containsKey(entry.key), isTrue,
+          reason: '${entry.key} missing after resume');
+      expect(got[entry.key], entry.value,
+          reason: '${entry.key} content mismatch after resume');
+    }
+  });
 }

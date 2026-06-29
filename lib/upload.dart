@@ -103,6 +103,7 @@ class FilenUpload {
     Set<int>? completedChunks,
     String? fileKey,
     int maxConcurrentChunks = kDefaultUploadConcurrency,
+    ChunkSemaphore? globalChunkSlots,
     Function(int current, int total, int bytesUploaded, int totalBytes)?
         onProgress,
     Function(String uuid, String uploadKey, String fileKey)? onUploadStart,
@@ -269,7 +270,15 @@ class FilenUpload {
 
           inflight.add(() async {
             try {
-              await postChunk(myIdx, enc);
+              // Shared batch budget (Step 2): bound the number of chunk POSTs
+              // in flight across the WHOLE batch, not just this file. No-op when
+              // uploading a single file (globalChunkSlots == null).
+              if (globalChunkSlots != null) await globalChunkSlots.acquire();
+              try {
+                await postChunk(myIdx, enc);
+              } finally {
+                if (globalChunkSlots != null) globalChunkSlots.release();
+              }
               completed.add(myIdx);
               reportProgress();
             } catch (e) {
@@ -298,10 +307,15 @@ class FilenUpload {
           if (done.contains(myIdx)) continue;
 
           final enc = await crypto.encryptData(bytes, fileKeyBytes);
+          // Shared batch budget (Step 2): one permit per chunk in flight across
+          // the batch. No-op for a lone file (globalChunkSlots == null).
+          if (globalChunkSlots != null) await globalChunkSlots.acquire();
           try {
             await postChunk(myIdx, enc);
           } catch (e) {
             throw fail(myIdx, e);
+          } finally {
+            if (globalChunkSlots != null) globalChunkSlots.release();
           }
           completed.add(myIdx);
           reportProgress();
@@ -368,6 +382,7 @@ class FilenUpload {
     Function(String filename, int current, int total, int bytesUploaded,
             int totalBytes)?
         onFileProgress,
+    int maxWorkers = kDefaultFileConcurrency,
   }) async {
     api.log("Upload target path: $targetPath");
 
@@ -432,150 +447,105 @@ class FilenUpload {
     int skippedCount = 0;
     int errorCount = 0;
     int completedPreviously = 0;
+    int processed = 0;
     final totalTasks = tasks.length;
 
-    for (int i = 0; i < totalTasks; i++) {
-      final task = tasks[i] as Map<String, dynamic>;
-      final localPath = task['localPath'] as String;
-      final remotePath = task['remotePath'] as String;
-      final status = task['status'] as String;
-      final remoteName = p.basename(remotePath);
+    // Step 2: number of whole FILES uploaded at once. Capped at the count of
+    // pending tasks and floored at 1 — a single file, or maxWorkers<=1, keeps
+    // the sequential path (no shared budget, no pre-creation).
+    final pending = [
+      for (final t in tasks)
+        if ((t as Map<String, dynamic>)['status'] != 'completed') t
+    ];
+    final effectiveWorkers =
+        max(1, min(maxWorkers, pending.isEmpty ? 1 : pending.length));
 
-      final pct =
-          totalTasks > 0 ? ((i) / totalTasks * 100).toStringAsFixed(1) : '0.0';
-      final width = 20;
-      final filled = totalTasks > 0 ? ((i / totalTasks) * width).round() : 0;
-      final bar = '█' * filled + '░' * (width - filled);
-
-      if (!api.debugMode) {
-        final shortName = remoteName.length > 20
-            ? remoteName.substring(0, 17) + '...'
-            : remoteName;
-        stdout.write(
-            '\rUp: ${shortName.padRight(20)} |$bar| ${i + 1}/$totalTasks ($pct%)  ');
-      }
-
-      if (status == 'completed') {
-        completedPreviously++;
-        if (i == totalTasks - 1 && !api.debugMode) stdout.write('\n');
-        continue;
-      }
-      if (status.startsWith('skipped')) {
-        skippedCount++;
-        continue;
-      }
-
-      final localFile = File(localPath);
-      if (!await localFile.exists()) {
-        skippedCount++;
-        task['status'] = 'skipped_missing';
-        await saveStateCallback(batchState);
-        continue;
-      }
-
-      final remoteParentPath = p.dirname(remotePath).replaceAll('\\', '/');
-      Map<String, dynamic> parentInfo;
+    // saveStateCallback is async and shared (whole batchState). With files
+    // completing out of order it must be serialized — a 1-permit semaphore
+    // mutex prevents two concurrent file writers from interleaving.
+    final saveMutex = ChunkSemaphore(1);
+    Future<void> saveState() async {
+      await saveMutex.acquire();
       try {
-        parentInfo = await drive.createFolderRecursive(remoteParentPath);
-      } catch (e) {
-        errorCount++;
-        task['status'] = 'error_parent';
-        continue;
+        await saveStateCallback(batchState);
+      } finally {
+        saveMutex.release();
       }
+    }
 
-      bool shouldUpload = true;
-      if (task['fileUuid'] == null) {
-        final cachedFiles = cache.fileCache[parentInfo['uuid']]?.items;
-        bool exists = false;
-        if (cachedFiles != null) {
-          exists = (cachedFiles as List).any((f) => f['name'] == remoteName);
-        } else {
-          exists = await drive.checkFileExists(parentInfo['uuid'], remoteName);
-        }
-
-        if (exists && onConflict == 'skip') {
+    void tally(String token) {
+      switch (token) {
+        case 'completed':
+          successCount++;
+          break;
+        case 'skipped':
           skippedCount++;
-          task['status'] = 'skipped_conflict';
-          await saveStateCallback(batchState);
-          shouldUpload = false;
+          break;
+        case 'error':
+          errorCount++;
+          break;
+        case 'already':
+          completedPreviously++;
+          break;
+      }
+      processed++;
+      if (!api.debugMode) {
+        final pct = totalTasks > 0
+            ? (processed / totalTasks * 100).toStringAsFixed(1)
+            : '0.0';
+        stdout.write('\rUp: $processed/$totalTasks files ($pct%)  ');
+      }
+    }
+
+    if (effectiveWorkers <= 1) {
+      // Sequential path: behaves exactly like the pre-Step-2 loop.
+      for (final t in tasks) {
+        tally(await _uploadTask(
+          t as Map<String, dynamic>,
+          parentMap: null,
+          onConflict: onConflict,
+          preserveTimestamps: preserveTimestamps,
+          saveState: saveState,
+          maxConcurrentChunks: kDefaultUploadConcurrency,
+          globalChunkSlots: null,
+        ));
+      }
+    } else {
+      // Pre-create unique parent folders ONCE, before fan-out, so the shared
+      // createFolderRecursive + cache-invalidation side effects can't race
+      // across concurrent files (constraint 3).
+      final parentMap = <String, Map<String, dynamic>>{};
+      for (final t in pending) {
+        final rp = p.dirname(t['remotePath'].toString()).replaceAll('\\', '/');
+        if (parentMap.containsKey(rp)) continue;
+        try {
+          parentMap[rp] = await drive.createFolderRecursive(rp);
+        } catch (e) {
+          // Leave it unmapped; the per-task path retries and marks
+          // error_parent — same outcome as the sequential path.
+          api.log('Pre-create parent failed for $rp: $e');
         }
       }
 
-      if (!shouldUpload) continue;
+      // ONE shared budget across files × chunks (constraint 2). Per-file chunk
+      // concurrency is lowered too so no single file monopolizes the budget.
+      final perFileChunks =
+          max(1, kGlobalMaxInflightChunks ~/ effectiveWorkers);
+      final globalChunkSlots = ChunkSemaphore(kGlobalMaxInflightChunks);
+      print(
+          "  🧵 Uploading ${pending.length} file(s) with $effectiveWorkers worker(s)");
 
-      // Memory is gated PER-CHUNK inside uploadFileChunked now (Step 1), not
-      // per-file here — so many small files no longer each reserve their full
-      // size up front.
-      try {
-        String? cTime, mTime;
-        if (preserveTimestamps) {
-          final stat = await localFile.stat();
-          mTime = stat.modified.millisecondsSinceEpoch.toString();
-          cTime = stat.changed.millisecondsSinceEpoch.toString();
-        }
-
-        // Resume from the completed SET (legacy lastChunk folds into it).
-        final resumeCompleted = <int>{
-          ...((task['completedChunks'] as List?)?.cast<int>() ?? const []),
-        };
-        if ((task['lastChunk'] ?? -1) >= 0) {
-          for (var i = 0; i <= (task['lastChunk'] as int); i++) {
-            resumeCompleted.add(i);
-          }
-        }
-        final isResuming = resumeCompleted.isNotEmpty;
-
-        task['status'] = 'uploading';
-        await saveStateCallback(batchState);
-
-        await uploadFileChunked(
-          localFile,
-          parentInfo['uuid'],
-          fileUuid: task['fileUuid'],
-          resumeUploadKey: task['uploadKey'],
-          fileKey: isResuming ? task['fileKey'] : null,
-          completedChunks: isResuming ? resumeCompleted : null,
-          creationTime: cTime,
-          modificationTime: mTime,
-          onUploadStart: (uuid, key, fkey) {
-            task['fileUuid'] = uuid;
-            task['uploadKey'] = key;
-            task['fileKey'] = fkey;
-            task['lastChunk'] = -1;
-            task['completedChunks'] = <int>[];
-            saveStateCallback(batchState);
-          },
-          // Chunks complete out of order: persist the exact set plus a
-          // contiguous-safe high-water mark for legacy resume.
-          onChunksCompleted: (completed) {
-            task['completedChunks'] = completed.toList()..sort();
-            task['lastChunk'] = contiguousCompletedMax(completed);
-          },
-        );
-
-        successCount++;
-        task['status'] = 'completed';
-        task['fileUuid'] = null;
-        task['uploadKey'] = null;
-        task['fileKey'] = null;
-        task['lastChunk'] = -1;
-        task['completedChunks'] = <int>[];
-      } on ChunkUploadException catch (e) {
-        if (api.debugMode) print("\n❌ Upload error: $e");
-        errorCount++;
-        task['fileUuid'] = e.fileUuid;
-        task['uploadKey'] = e.uploadKey;
-        task['fileKey'] = e.fileKey;
-        task['completedChunks'] = e.completedChunks.toList()..sort();
-        task['lastChunk'] = e.lastSuccessfulChunk;
-        task['status'] = 'interrupted';
-      } catch (e) {
-        if (api.debugMode) print("\n❌ Upload error: $e");
-        errorCount++;
-        task['status'] = 'interrupted';
-      }
-
-      await saveStateCallback(batchState);
+      await runWithConcurrency(tasks, effectiveWorkers, (t) async {
+        tally(await _uploadTask(
+          t as Map<String, dynamic>,
+          parentMap: parentMap,
+          onConflict: onConflict,
+          preserveTimestamps: preserveTimestamps,
+          saveState: saveState,
+          maxConcurrentChunks: perFileChunks,
+          globalChunkSlots: globalChunkSlots,
+        ));
+      });
     }
 
     if (!api.debugMode) stdout.write('\n');
@@ -589,6 +559,138 @@ class FilenUpload {
     print('=' * 40);
 
     if (errorCount > 0) throw Exception("Upload finished with errors");
+  }
+
+  /// Upload a single batch task; returns one of 'completed', 'skipped',
+  /// 'error', 'already'. Safe to run concurrently: it mutates only its own
+  /// [task], routes every state write through the serialized [saveState], and
+  /// shares the batch-wide [globalChunkSlots] budget.
+  Future<String> _uploadTask(
+    Map<String, dynamic> task, {
+    required Map<String, Map<String, dynamic>>? parentMap,
+    required String onConflict,
+    required bool preserveTimestamps,
+    required Future<void> Function() saveState,
+    required int maxConcurrentChunks,
+    required ChunkSemaphore? globalChunkSlots,
+  }) async {
+    final localPath = task['localPath'] as String;
+    final remotePath = task['remotePath'] as String;
+    final status = task['status'] as String;
+    final remoteName = p.basename(remotePath);
+
+    if (status == 'completed') return 'already';
+    if (status.startsWith('skipped')) return 'skipped';
+
+    final localFile = File(localPath);
+    if (!await localFile.exists()) {
+      task['status'] = 'skipped_missing';
+      await saveState();
+      return 'skipped';
+    }
+
+    // Parent folder: pre-created before fan-out (parentMap) in the concurrent
+    // path; created on demand for the sequential path / a missed parent.
+    final remoteParentPath = p.dirname(remotePath).replaceAll('\\', '/');
+    Map<String, dynamic>? parentInfo = parentMap?[remoteParentPath];
+    if (parentInfo == null) {
+      try {
+        parentInfo = await drive.createFolderRecursive(remoteParentPath);
+      } catch (e) {
+        task['status'] = 'error_parent';
+        await saveState();
+        return 'error';
+      }
+    }
+
+    if (task['fileUuid'] == null) {
+      final cachedFiles = cache.fileCache[parentInfo['uuid']]?.items;
+      bool exists = false;
+      if (cachedFiles != null) {
+        exists = (cachedFiles as List).any((f) => f['name'] == remoteName);
+      } else {
+        exists = await drive.checkFileExists(parentInfo['uuid'], remoteName);
+      }
+      if (exists && onConflict == 'skip') {
+        task['status'] = 'skipped_conflict';
+        await saveState();
+        return 'skipped';
+      }
+    }
+
+    try {
+      String? cTime, mTime;
+      if (preserveTimestamps) {
+        final stat = await localFile.stat();
+        mTime = stat.modified.millisecondsSinceEpoch.toString();
+        cTime = stat.changed.millisecondsSinceEpoch.toString();
+      }
+
+      // Resume from the completed SET (legacy lastChunk folds into it).
+      final resumeCompleted = <int>{
+        ...((task['completedChunks'] as List?)?.cast<int>() ?? const []),
+      };
+      if ((task['lastChunk'] ?? -1) >= 0) {
+        for (var i = 0; i <= (task['lastChunk'] as int); i++) {
+          resumeCompleted.add(i);
+        }
+      }
+      final isResuming = resumeCompleted.isNotEmpty;
+
+      task['status'] = 'uploading';
+      await saveState();
+
+      await uploadFileChunked(
+        localFile,
+        parentInfo['uuid'],
+        fileUuid: task['fileUuid'],
+        resumeUploadKey: task['uploadKey'],
+        fileKey: isResuming ? task['fileKey'] : null,
+        completedChunks: isResuming ? resumeCompleted : null,
+        creationTime: cTime,
+        modificationTime: mTime,
+        maxConcurrentChunks: maxConcurrentChunks,
+        globalChunkSlots: globalChunkSlots,
+        onUploadStart: (uuid, key, fkey) {
+          task['fileUuid'] = uuid;
+          task['uploadKey'] = key;
+          task['fileKey'] = fkey;
+          task['lastChunk'] = -1;
+          task['completedChunks'] = <int>[];
+          saveState();
+        },
+        // Chunks complete out of order: persist the exact set plus a
+        // contiguous-safe high-water mark for legacy resume.
+        onChunksCompleted: (completed) {
+          task['completedChunks'] = completed.toList()..sort();
+          task['lastChunk'] = contiguousCompletedMax(completed);
+        },
+      );
+
+      task['status'] = 'completed';
+      task['fileUuid'] = null;
+      task['uploadKey'] = null;
+      task['fileKey'] = null;
+      task['lastChunk'] = -1;
+      task['completedChunks'] = <int>[];
+      await saveState();
+      return 'completed';
+    } on ChunkUploadException catch (e) {
+      if (api.debugMode) print("\n❌ Upload error: $e");
+      task['fileUuid'] = e.fileUuid;
+      task['uploadKey'] = e.uploadKey;
+      task['fileKey'] = e.fileKey;
+      task['completedChunks'] = e.completedChunks.toList()..sort();
+      task['lastChunk'] = e.lastSuccessfulChunk;
+      task['status'] = 'interrupted';
+      await saveState();
+      return 'error';
+    } catch (e) {
+      if (api.debugMode) print("\n❌ Upload error: $e");
+      task['status'] = 'interrupted';
+      await saveState();
+      return 'error';
+    }
   }
 
   Future<void> _processEntityForUpload(

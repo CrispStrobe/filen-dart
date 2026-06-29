@@ -6,6 +6,21 @@
 import 'dart:async';
 import 'dart:io';
 
+/// File-level (batch) concurrency (Step 2). W = whole FILES transferred at once
+/// in a batch directory upload/download — the bigger real-world win when syncing
+/// many files. Each file ALSO runs Step 1 chunk concurrency internally, so the
+/// dangerous quantity is the PRODUCT (W files × N chunks each). One shared
+/// [ChunkSemaphore] caps that product across the whole batch: every chunk
+/// transfer (sequential OR concurrent path) takes one permit before the network
+/// call and releases it after, so total in-flight is bounded regardless of how
+/// W and the per-file degree combine. (The per-chunk [MemoryGate] still bounds
+/// bytes; this bounds the cross-file count.)
+const int kDefaultFileConcurrency = 4;
+
+/// Total chunks allowed in flight across ALL files × their chunks. At ~2 MB live
+/// per chunk this is a ~16 MB ceiling — matters on mobile (CrispCloud).
+const int kGlobalMaxInflightChunks = 8;
+
 class MemoryGate {
   /// Maximum bytes allowed in-flight at once.
   final int maxBytes;
@@ -136,6 +151,34 @@ class _MemoryWaiter {
   final Completer<void> completer;
 
   _MemoryWaiter({required this.bytes, required this.completer});
+}
+
+/// Run [action] over [items] with at most [concurrency] in flight at once.
+/// Mirrors internxt-dart's runWithConcurrency: a [ChunkSemaphore] gates how
+/// many item futures are active; the rest queue. This is the file-level (Step 2)
+/// batch primitive — each whole-file transfer is one item, and the per-file
+/// chunk concurrency (Step 1) composes underneath. Completes once every item
+/// has finished. If [action] throws for an item, that error propagates out of
+/// the returned future (callers that must not abort the batch should catch
+/// inside [action] and return a sentinel instead).
+Future<void> runWithConcurrency<T>(
+  Iterable<T> items,
+  int concurrency,
+  Future<void> Function(T item) action,
+) async {
+  final sem = ChunkSemaphore(concurrency < 1 ? 1 : concurrency);
+  final inflight = <Future<void>>[];
+  for (final item in items) {
+    await sem.acquire();
+    inflight.add(() async {
+      try {
+        await action(item);
+      } finally {
+        sem.release();
+      }
+    }());
+  }
+  await Future.wait(inflight);
 }
 
 /// A counting semaphore that bounds the *number* of concurrent in-flight chunk

@@ -2,6 +2,7 @@
 /// conflict handling and resume support.
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
@@ -177,6 +178,7 @@ class FilenDownload {
     String uuid, {
     String? savePath,
     int maxConcurrentChunks = kDefaultDownloadConcurrency,
+    ChunkSemaphore? globalChunkSlots,
     Function(int bytesDownloaded, int totalBytes)? onProgress,
   }) async {
     api.log('Downloading file: $uuid');
@@ -209,7 +211,15 @@ class FilenDownload {
       final sink = File(targetPath).openWrite();
       try {
         for (var i = 0; i < chunks; i++) {
-          final decrypted = await _fetchChunk(host, d, uuid, i, keyBytes);
+          // Shared batch budget (Step 2): one permit per chunk in flight across
+          // the batch. No-op for a lone file (globalChunkSlots == null).
+          if (globalChunkSlots != null) await globalChunkSlots.acquire();
+          Uint8List decrypted;
+          try {
+            decrypted = await _fetchChunk(host, d, uuid, i, keyBytes);
+          } finally {
+            if (globalChunkSlots != null) globalChunkSlots.release();
+          }
           sink.add(decrypted);
           bytesDownloaded += decrypted.length;
           if (onProgress != null) onProgress(bytesDownloaded, fileSize);
@@ -242,7 +252,15 @@ class FilenDownload {
           final idx = i;
           inflight.add(() async {
             try {
-              final decrypted = await _fetchChunk(host, d, uuid, idx, keyBytes);
+              // Shared batch budget (Step 2): bound chunk fetches in flight
+              // across the WHOLE batch, not just this file.
+              if (globalChunkSlots != null) await globalChunkSlots.acquire();
+              Uint8List decrypted;
+              try {
+                decrypted = await _fetchChunk(host, d, uuid, idx, keyBytes);
+              } finally {
+                if (globalChunkSlots != null) globalChunkSlots.release();
+              }
               await writeLock.acquire();
               try {
                 await raf.setPosition(idx * _kDownloadChunkSize);
@@ -286,6 +304,7 @@ class FilenDownload {
     required String batchId,
     Map<String, dynamic>? initialBatchState,
     required Future<void> Function(Map<String, dynamic>) saveStateCallback,
+    int maxWorkers = kDefaultFileConcurrency,
   }) async {
     final itemInfo = await drive.resolvePath(remotePath);
 
@@ -427,82 +446,76 @@ class FilenDownload {
     int skippedCount = 0;
     int errorCount = 0;
     int completedPreviously = 0;
+    int processed = 0;
     final totalTasks = tasks.length;
 
-    for (int i = 0; i < totalTasks; i++) {
-      final task = tasks[i] as Map<String, dynamic>;
-      final localPath = task['localPath'] as String;
-      final remoteUuid = task['remoteUuid'] as String;
-      final status = task['status'] as String;
-      final remoteModTime = task['remoteModificationTime'];
-      final filename = p.basename(localPath);
+    // Step 2: whole FILES downloaded at once. Capped at pending count, floored
+    // at 1 (single file / maxWorkers<=1 → sequential path).
+    final pending = [
+      for (final t in tasks)
+        if ((t as Map<String, dynamic>)['status'] != 'completed') t
+    ];
+    final effectiveWorkers =
+        max(1, min(maxWorkers, pending.isEmpty ? 1 : pending.length));
 
-      final pct = ((i) / totalTasks * 100).toStringAsFixed(1);
-      final width = 20;
-      final filled = ((i / totalTasks) * width).round();
-      final bar = '█' * filled + '░' * (width - filled);
-      if (!api.debugMode) {
-        stdout.write(
-            '\rDown: ${filename.padRight(20).substring(0, 20)} |$bar| ${i + 1}/$totalTasks ($pct%)  ');
-      }
-
-      if (status == 'completed') {
-        completedPreviously++;
-        continue;
-      }
-      if (status.startsWith('skipped')) {
-        skippedCount++;
-        continue;
-      }
-
-      await Directory(p.dirname(localPath)).create(recursive: true);
-      final localFile = File(localPath);
-
-      if (await localFile.exists()) {
-        if (onConflict == 'skip') {
-          skippedCount++;
-          task['status'] = 'skipped_conflict';
-          await saveStateCallback(batchState);
-          continue;
-        }
-        if (onConflict == 'newer' && remoteModTime != null) {
-          final stat = await localFile.stat();
-          if (stat.modified.millisecondsSinceEpoch >=
-              (remoteModTime is int
-                  ? remoteModTime
-                  : int.parse(remoteModTime.toString()))) {
-            skippedCount++;
-            task['status'] = 'skipped_newer';
-            await saveStateCallback(batchState);
-            continue;
-          }
-        }
-      }
-
+    // Serialize the shared (whole-batchState) async saves under a 1-permit mutex.
+    final saveMutex = ChunkSemaphore(1);
+    Future<void> saveState() async {
+      await saveMutex.acquire();
       try {
-        final result = await downloadFile(remoteUuid, savePath: localPath);
-
-        if (preserveTimestamps) {
-          final mt = result['modificationTime'] ?? remoteModTime;
-          if (mt != null) {
-            try {
-              final dt = mt is int
-                  ? DateTime.fromMillisecondsSinceEpoch(mt)
-                  : DateTime.parse(mt.toString());
-              await localFile.setLastModified(dt);
-            } catch (_) {}
-          }
-        }
-
-        successCount++;
-        task['status'] = 'completed';
-      } catch (e) {
-        if (api.debugMode) print("Error: $e");
-        errorCount++;
-        task['status'] = 'error_download';
+        await saveStateCallback(batchState);
+      } finally {
+        saveMutex.release();
       }
+    }
 
-      await saveStateCallback(batchState);
+    void tally(String token) {
+      switch (token) {
+        case 'completed':
+          successCount++;
+          break;
+        case 'skipped':
+          skippedCount++;
+          break;
+        case 'error':
+          errorCount++;
+          break;
+        case 'already':
+          completedPreviously++;
+          break;
+      }
+      processed++;
+      if (!api.debugMode) {
+        final pct = totalTasks > 0
+            ? (processed / totalTasks * 100).toStringAsFixed(1)
+            : '0.0';
+        stdout.write('\rDown: $processed/$totalTasks files ($pct%)  ');
+      }
+    }
+
+    if (effectiveWorkers <= 1) {
+      for (final t in tasks) {
+        tally(await _downloadTask(
+          t as Map<String, dynamic>,
+          onConflict: onConflict,
+          preserveTimestamps: preserveTimestamps,
+          saveState: saveState,
+          globalChunkSlots: null,
+        ));
+      }
+    } else {
+      final globalChunkSlots = ChunkSemaphore(kGlobalMaxInflightChunks);
+      print(
+          "  🧵 Downloading ${pending.length} file(s) with $effectiveWorkers worker(s)");
+      await runWithConcurrency(tasks, effectiveWorkers, (t) async {
+        tally(await _downloadTask(
+          t as Map<String, dynamic>,
+          onConflict: onConflict,
+          preserveTimestamps: preserveTimestamps,
+          saveState: saveState,
+          globalChunkSlots: globalChunkSlots,
+        ));
+      });
     }
 
     print('\n' + '=' * 40);
@@ -512,5 +525,73 @@ class FilenDownload {
     print('  ⏭️  Skipped: $skippedCount');
     print('  ❌ Errors: $errorCount');
     print('=' * 40);
+  }
+
+  /// Download a single batch task; returns 'completed', 'skipped', 'error',
+  /// or 'already'. Safe to run concurrently: it writes only its own local file
+  /// + [task], routes state writes through the serialized [saveState], and
+  /// shares the batch-wide [globalChunkSlots] budget.
+  Future<String> _downloadTask(
+    Map<String, dynamic> task, {
+    required String onConflict,
+    required bool preserveTimestamps,
+    required Future<void> Function() saveState,
+    required ChunkSemaphore? globalChunkSlots,
+  }) async {
+    final localPath = task['localPath'] as String;
+    final remoteUuid = task['remoteUuid'] as String;
+    final status = task['status'] as String;
+    final remoteModTime = task['remoteModificationTime'];
+
+    if (status == 'completed') return 'already';
+    if (status.startsWith('skipped')) return 'skipped';
+
+    await Directory(p.dirname(localPath)).create(recursive: true);
+    final localFile = File(localPath);
+
+    if (await localFile.exists()) {
+      if (onConflict == 'skip') {
+        task['status'] = 'skipped_conflict';
+        await saveState();
+        return 'skipped';
+      }
+      if (onConflict == 'newer' && remoteModTime != null) {
+        final stat = await localFile.stat();
+        if (stat.modified.millisecondsSinceEpoch >=
+            (remoteModTime is int
+                ? remoteModTime
+                : int.parse(remoteModTime.toString()))) {
+          task['status'] = 'skipped_newer';
+          await saveState();
+          return 'skipped';
+        }
+      }
+    }
+
+    try {
+      final result = await downloadFile(remoteUuid,
+          savePath: localPath, globalChunkSlots: globalChunkSlots);
+
+      if (preserveTimestamps) {
+        final mt = result['modificationTime'] ?? remoteModTime;
+        if (mt != null) {
+          try {
+            final dt = mt is int
+                ? DateTime.fromMillisecondsSinceEpoch(mt)
+                : DateTime.parse(mt.toString());
+            await localFile.setLastModified(dt);
+          } catch (_) {}
+        }
+      }
+
+      task['status'] = 'completed';
+      await saveState();
+      return 'completed';
+    } catch (e) {
+      if (api.debugMode) print("Error: $e");
+      task['status'] = 'error_download';
+      await saveState();
+      return 'error';
+    }
   }
 }

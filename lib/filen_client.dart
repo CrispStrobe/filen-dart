@@ -15,6 +15,7 @@ import 'package:filen_dart/config.dart';
 import 'package:filen_dart/crypto.dart';
 import 'package:filen_dart/download.dart';
 import 'package:filen_dart/drive.dart';
+import 'package:filen_dart/memory_gate.dart';
 import 'package:filen_dart/upload.dart';
 import 'package:filen_dart/utils.dart' as utils_lib;
 
@@ -207,6 +208,7 @@ class FilenClient {
     Map<String, dynamic>? initialBatchState,
     required Future<void> Function(Map<String, dynamic>) saveStateCallback,
     Function(String, int, int, int, int)? onFileProgress,
+    int maxWorkers = kDefaultFileConcurrency,
   }) =>
       uploader.upload(sources, targetPath,
           recursive: recursive,
@@ -217,7 +219,8 @@ class FilenClient {
           batchId: batchId,
           initialBatchState: initialBatchState,
           saveStateCallback: saveStateCallback,
-          onFileProgress: onFileProgress);
+          onFileProgress: onFileProgress,
+          maxWorkers: maxWorkers);
 
   Future<Uint8List> downloadFileBytes(String uuid,
           {int maxConcurrentChunks = kDefaultDownloadConcurrency,
@@ -245,6 +248,7 @@ class FilenClient {
     required String batchId,
     Map<String, dynamic>? initialBatchState,
     required Future<void> Function(Map<String, dynamic>) saveStateCallback,
+    int maxWorkers = kDefaultFileConcurrency,
   }) =>
       downloader.downloadPath(remotePath,
           localDestination: localDestination,
@@ -255,7 +259,8 @@ class FilenClient {
           exclude: exclude,
           batchId: batchId,
           initialBatchState: initialBatchState,
-          saveStateCallback: saveStateCallback);
+          saveStateCallback: saveStateCallback,
+          maxWorkers: maxWorkers);
 
   void log(String msg) => api.log(msg);
   void logWebDAV(String msg) => api.logWebDAV(msg);
