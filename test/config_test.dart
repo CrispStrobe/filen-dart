@@ -88,12 +88,34 @@ void main() {
       expect(await fileConfig.readCredentials(), isNull);
     });
 
-    test('credentials are stored as plain JSON (regression marker)', () async {
+    test('credentials are encrypted at rest (default file storage)', () async {
       await fileConfig
           .saveCredentials({'apiKey': 'sentinel-token-abcdef-12345'});
       final raw = await File(fileConfig.credentialsFile).readAsString();
-      expect(raw.contains('sentinel-token-abcdef-12345'), isTrue);
-      expect(jsonDecode(raw), isA<Map<String, dynamic>>());
+      // The secret must NOT appear in cleartext on disk.
+      expect(raw.contains('sentinel-token-abcdef-12345'), isFalse);
+      final env = jsonDecode(raw) as Map<String, dynamic>;
+      expect(env['fmt'], equals(credentialsFmt));
+      expect(env['ct'], isA<String>());
+      // ...and it still round-trips back through readCredentials.
+      final read = await fileConfig.readCredentials();
+      expect(read!['apiKey'], equals('sentinel-token-abcdef-12345'));
+    });
+
+    test('reads + migrates a legacy plaintext-JSON credentials file', () async {
+      // Pre-encryption format: raw credentials JSON written directly.
+      await File(fileConfig.credentialsFile)
+          .writeAsString(jsonEncode({'apiKey': 'legacy-token-xyz'}));
+      // First read returns the legacy creds...
+      final read = await fileConfig.readCredentials();
+      expect(read!['apiKey'], equals('legacy-token-xyz'));
+      // ...and migrates the file to the encrypted envelope in place.
+      final raw = await File(fileConfig.credentialsFile).readAsString();
+      expect(raw.contains('legacy-token-xyz'), isFalse);
+      expect((jsonDecode(raw) as Map)['fmt'], equals(credentialsFmt));
+      // The migrated file still round-trips.
+      expect((await fileConfig.readCredentials())!['apiKey'],
+          equals('legacy-token-xyz'));
     });
 
     test('clear removes the on-disk credentials file', () async {

@@ -19,6 +19,7 @@ const thresholds = <String, int>{
   'lib/utils.dart': 100,
   'lib/config.dart': 90,
   'lib/config_storage.dart': 95,
+  'lib/credential_crypto.dart': 90,
   'lib/cache.dart': 80,
   // Lower than local (~76%): MemoryGate sizes concurrency off
   // Platform.numberOfProcessors, so fewer branches run on small CI runners

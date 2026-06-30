@@ -54,6 +54,10 @@ class FilenCLI {
       ..addFlag('background',
           abbr: 'b', help: 'Run WebDAV server in background')
       ..addFlag('daemon', hide: true, help: 'Internal: run as daemon process')
+      ..addFlag('password-stdin',
+          negatable: false,
+          help: 'Read the password from stdin instead of prompting '
+              r'(printf %s "$PW" | filen login --password-stdin)')
       ..addOption('mount-point', abbr: 'm', help: 'WebDAV mount point path')
       ..addOption('port', help: 'WebDAV server port', defaultsTo: '8080')
       ..addFlag('webdav-debug', help: 'Enable WebDAV debug logging')
@@ -78,7 +82,8 @@ class FilenCLI {
 
       switch (command) {
         case 'login':
-          await handleLogin(commandArgs.sublist(1));
+          await handleLogin(commandArgs.sublist(1),
+              passwordStdin: argResults['password-stdin'] as bool);
           break;
         case 'ls':
         case 'list':
@@ -264,18 +269,33 @@ class FilenCLI {
   // HANDLERS
   // ---------------------------------------------------------------------------
 
-  Future<void> handleLogin(List<String> args) async {
-    stdout.write('Email: ');
-    final email = stdin.readLineSync()?.trim() ?? '';
-    if (email.isEmpty) _exit('Email is required');
+  Future<void> handleLogin(List<String> args,
+      {bool passwordStdin = false}) async {
+    // Email: FILEN_EMAIL env var, else interactive prompt.
+    var email = (Platform.environment['FILEN_EMAIL'] ?? '').trim();
+    if (email.isEmpty) {
+      stdout.write('Email: ');
+      email = stdin.readLineSync()?.trim() ?? '';
+    }
+    if (email.isEmpty) _exit('Email is required (or set FILEN_EMAIL)');
 
-    stdout.write('Password: ');
-    stdin.echoMode = false;
-    final rawPassword = stdin.readLineSync() ?? '';
-    stdin.echoMode = true;
-    print('');
-
-    final password = rawPassword.replaceAll(RegExp(r'[\r\n]+$'), '');
+    // Password (most to least secure): --password-stdin, FILEN_PASSWORD env,
+    // interactive no-echo prompt.
+    final String password;
+    final envPassword = Platform.environment['FILEN_PASSWORD'];
+    if (passwordStdin) {
+      password =
+          stdin.readLineSync()?.replaceAll(RegExp(r'[\r\n]+$'), '') ?? '';
+    } else if (envPassword != null && envPassword.isNotEmpty) {
+      password = envPassword;
+    } else {
+      stdout.write('Password: ');
+      stdin.echoMode = false;
+      password =
+          (stdin.readLineSync() ?? '').replaceAll(RegExp(r'[\r\n]+$'), '');
+      stdin.echoMode = true;
+      print('');
+    }
     if (password.isEmpty) _exit('Password is required');
 
     print('\ud83d\udd10 Logging in...');
@@ -291,10 +311,14 @@ class FilenCLI {
     } catch (e) {
       final errStr = e.toString();
       if (errStr.contains('enter_2fa') || errStr.contains('wrong_2fa')) {
-        print('\n\ud83d\udd10 Two-factor authentication required.');
-        stdout.write('Enter 2FA code: ');
-        final tfaCode = stdin.readLineSync()?.trim();
-        if (tfaCode == null || tfaCode.isEmpty) _exit('Code required.');
+        // 2FA: FILEN_2FA env var (for automation), else interactive prompt.
+        var tfaCode = (Platform.environment['FILEN_2FA'] ?? '').trim();
+        if (tfaCode.isEmpty) {
+          print('\n\ud83d\udd10 Two-factor authentication required.');
+          stdout.write('Enter 2FA code: ');
+          tfaCode = stdin.readLineSync()?.trim() ?? '';
+        }
+        if (tfaCode.isEmpty) _exit('2FA code is required (or set FILEN_2FA)');
 
         try {
           var credentials =
