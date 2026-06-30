@@ -33,6 +33,12 @@ const thresholds = <String, int>{
   'lib/cli.dart': 0,
   'lib/paths.dart': 30,
   'lib/webdav_filesystem.dart': 25,
+  // AES-GCM backends. openssl is exercised on the Linux test runner (~98%);
+  // the bcrypt-FFI backend branch only runs on Windows so it's uncovered here;
+  // bcrypt_aesgcm itself is Windows-only (validated by the windows-crypto CI job).
+  'lib/openssl_aesgcm.dart': 90,
+  'lib/aes_gcm_backend.dart': 65,
+  'lib/bcrypt_aesgcm.dart': 0,
 };
 
 const defaultThreshold = 10;

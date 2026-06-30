@@ -52,6 +52,29 @@ jobs:
       - name: Coverage gate (per-file thresholds)
         run: dart run tool/check_coverage.dart coverage/lcov.info
 
+  # Native AES-GCM FFI bindings on Windows + macOS (Linux is covered by the
+  # `test` job above, which runs aes_gcm_backend_test -> OpenSSL assertion).
+  # aes_gcm_backend_test ASSERTS the OS binding loads + is byte-exact +
+  # interoperable with Filen's pointycastle wire format (Windows->BCrypt,
+  # macOS->OpenSSL if a Homebrew libcrypto is present). Headless, no app/device.
+  crypto-native:
+    name: Native crypto (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: analyze
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+      - run: dart pub get
+      - name: Native FFI AES-GCM tests (Windows -> BCrypt, macOS -> OpenSSL)
+        run: dart test test/aes_gcm_backend_test.dart
+
   compile:
     name: Compile binary smoke check
     runs-on: ubuntu-latest

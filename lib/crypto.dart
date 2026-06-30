@@ -13,11 +13,19 @@ import 'package:hex/hex.dart';
 import 'package:pointycastle/export.dart' hide Digest, HMac, SHA512Digest;
 
 import 'package:filen_dart/utils.dart';
+import 'package:filen_dart/aes_gcm_backend.dart';
 
 class FilenCrypto {
   final Random _random;
 
-  FilenCrypto({Random? random}) : _random = random ?? Random.secure();
+  /// AES-256-GCM backend for file chunks — hardware-accelerated where available
+  /// (OpenSSL/BCrypt FFI, or the host app's Cryptography.instance), else
+  /// pure-Dart. Replaces the ~1 MB/s pointycastle path on the chunk hot path.
+  final AesGcmBackend _aesGcm;
+
+  FilenCrypto({Random? random, AesGcmBackend? aesGcm})
+      : _random = random ?? Random.secure(),
+        _aesGcm = aesGcm ?? chooseAesGcmBackend();
 
   // --- Metadata encryption (v2 format: "002" + IV + ciphertext) ---
 
@@ -46,21 +54,14 @@ class FilenCrypto {
 
   // --- File data encryption (AES-256-GCM, IV prepended) ---
 
-  Future<Uint8List> encryptData(Uint8List data, Uint8List key) async {
-    final iv = randomBytes(12);
-    final c = GCMBlockCipher(AESEngine())
-      ..init(true, AEADParameters(KeyParameter(key), 128, iv, Uint8List(0)));
-    return Uint8List.fromList([...iv, ...c.process(data)]);
-  }
+  // File-chunk AES-256-GCM, [iv(12) | ciphertext | tag(16)]. Delegated to the
+  // selected backend (hardware where available); the wire format is unchanged,
+  // so existing Filen-encrypted chunks remain readable.
+  Future<Uint8List> encryptData(Uint8List data, Uint8List key) =>
+      _aesGcm.encryptData(key, data);
 
-  Future<Uint8List> decryptData(Uint8List data, Uint8List key) async {
-    final c = GCMBlockCipher(AESEngine())
-      ..init(
-          false,
-          AEADParameters(
-              KeyParameter(key), 128, data.sublist(0, 12), Uint8List(0)));
-    return c.process(data.sublist(12));
-  }
+  Future<Uint8List> decryptData(Uint8List data, Uint8List key) =>
+      _aesGcm.decryptData(key, data);
 
   // --- Key decoding ---
 
