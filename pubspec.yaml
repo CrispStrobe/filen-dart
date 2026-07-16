@@ -1,8 +1,6 @@
-name: filen_dart
-description: Filen.io CLI client in Dart (unofficial)
+name: filen_client
+description: Unofficial Dart client and CLI for Filen.io end-to-end-encrypted cloud storage — login, list, encrypted upload/download with batching and resume, plus a WebDAV bridge.
 version: 0.2.0
-publish_to: none
-
 environment:
   sdk: '>=3.0.0 <4.0.0'
 

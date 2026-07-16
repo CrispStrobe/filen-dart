@@ -23,13 +23,13 @@ import 'package:test/test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:filen_dart/api.dart';
-import 'package:filen_dart/cache.dart';
-import 'package:filen_dart/crypto.dart';
-import 'package:filen_dart/drive.dart';
-import 'package:filen_dart/download.dart';
-import 'package:filen_dart/memory_gate.dart';
-import 'package:filen_dart/upload.dart';
+import 'package:filen_client/api.dart';
+import 'package:filen_client/cache.dart';
+import 'package:filen_client/crypto.dart';
+import 'package:filen_client/drive.dart';
+import 'package:filen_client/download.dart';
+import 'package:filen_client/memory_gate.dart';
+import 'package:filen_client/upload.dart';
 
 const int mb = 1048576;
 const String masterKey = 'test-master-key-for-upload-tests0';

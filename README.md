@@ -832,9 +832,7 @@ CI.
 
 ## 📄 License
 
-This project is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**.
-
-See the [LICENSE](LICENSE) file for details.
+This project is licensed under the **Mozilla Public License 2.0 (MPL-2.0)** — weak copyleft: modifications to these files stay open, but you can use it in any app (including proprietary). See the [LICENSE](LICENSE) file for details.
 
 ## ⚠️ Disclaimer
 

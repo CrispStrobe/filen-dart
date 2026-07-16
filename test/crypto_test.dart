@@ -6,7 +6,7 @@ import 'dart:typed_data';
 import 'package:test/test.dart';
 import 'package:crypto/crypto.dart' as crypto_pkg;
 import 'package:hex/hex.dart';
-import 'package:filen_dart/crypto.dart';
+import 'package:filen_client/crypto.dart';
 
 void main() {
   late FilenCrypto crypto;

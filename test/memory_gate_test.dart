@@ -1,5 +1,5 @@
 import 'package:test/test.dart';
-import 'package:filen_dart/memory_gate.dart';
+import 'package:filen_client/memory_gate.dart';
 
 void main() {
   group('MemoryGate', () {

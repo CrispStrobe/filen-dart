@@ -3,8 +3,8 @@ import 'dart:typed_data';
 
 import 'package:file/file.dart';
 import 'package:test/test.dart';
-import 'package:filen_dart/filen_client.dart';
-import 'package:filen_dart/webdav_filesystem.dart';
+import 'package:filen_client/filen_client.dart';
+import 'package:filen_client/webdav_filesystem.dart';
 
 /// In-memory FilenClient: overrides the handful of methods the WebDAV
 /// filesystem calls so the FileSystem/File/Directory behaviour can be tested

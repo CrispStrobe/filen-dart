@@ -5,8 +5,8 @@ import 'dart:io';
 import 'package:crypto/crypto.dart' as crypto;
 import 'package:path/path.dart' as p;
 
-import 'package:filen_dart/config_storage.dart';
-import 'package:filen_dart/credential_crypto.dart' as cred;
+import 'package:filen_client/config_storage.dart';
+import 'package:filen_client/credential_crypto.dart' as cred;
 
 // Credential-at-rest format (CLI, file-backed storage only). The stored map is a
 // small JSON envelope {"fmt","src","ct"} where ct is the credentials JSON

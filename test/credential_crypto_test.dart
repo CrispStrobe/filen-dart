@@ -6,7 +6,7 @@
 import 'dart:convert';
 
 import 'package:test/test.dart';
-import 'package:filen_dart/credential_crypto.dart';
+import 'package:filen_client/credential_crypto.dart';
 
 void main() {
   const secret = 'a-wrapping-secret-key';

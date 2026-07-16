@@ -7,7 +7,7 @@ import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 
-import 'package:filen_dart/filen_client.dart';
+import 'package:filen_client/filen_client.dart';
 
 extension FilenPaths on FilenClient {
   /// Upload a local file to a remote path.

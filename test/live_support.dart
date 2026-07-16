@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:filen_dart/filen_client.dart';
+import 'package:filen_client/filen_client.dart';
 
 /// Path to a saved CLI session, used as a fallback when FILEN_EMAIL/PASSWORD
 /// are not set (overridable via the FILEN_CREDENTIALS env var).

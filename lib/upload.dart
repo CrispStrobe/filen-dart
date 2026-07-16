@@ -11,12 +11,12 @@ import 'package:glob/list_local_fs.dart';
 import 'package:hex/hex.dart';
 import 'package:path/path.dart' as p;
 
-import 'package:filen_dart/api.dart';
-import 'package:filen_dart/cache.dart';
-import 'package:filen_dart/crypto.dart';
-import 'package:filen_dart/drive.dart';
-import 'package:filen_dart/memory_gate.dart';
-import 'package:filen_dart/utils.dart';
+import 'package:filen_client/api.dart';
+import 'package:filen_client/cache.dart';
+import 'package:filen_client/crypto.dart';
+import 'package:filen_client/drive.dart';
+import 'package:filen_client/memory_gate.dart';
+import 'package:filen_client/utils.dart';
 
 /// Chunk transfer concurrency (Step 1). N chunks may be in flight at once,
 /// bounded by both a [ChunkSemaphore] (count) and the [MemoryGate] (bytes), so

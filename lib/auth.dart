@@ -3,8 +3,8 @@
 /// Handles login, 2FA, key derivation, and session setup.
 import 'dart:convert';
 
-import 'package:filen_dart/api.dart';
-import 'package:filen_dart/crypto.dart';
+import 'package:filen_client/api.dart';
+import 'package:filen_client/crypto.dart';
 
 class FilenAuth {
   final FilenApi api;

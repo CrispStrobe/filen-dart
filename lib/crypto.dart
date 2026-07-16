@@ -12,8 +12,8 @@ import 'package:crypto/crypto.dart' as crypto;
 import 'package:hex/hex.dart';
 import 'package:pointycastle/export.dart' hide Digest, HMac, SHA512Digest;
 
-import 'package:filen_dart/utils.dart';
-import 'package:filen_dart/aes_gcm_backend.dart';
+import 'package:filen_client/utils.dart';
+import 'package:filen_client/aes_gcm_backend.dart';
 
 class FilenCrypto {
   final Random _random;

@@ -2,7 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:test/test.dart';
-import 'package:filen_dart/filen_client.dart';
+import 'package:filen_client/filen_client.dart';
 
 /// Unit coverage for the path facade (`FilenPaths` extension) and the
 /// network-free parts of path resolution. End-to-end happy paths

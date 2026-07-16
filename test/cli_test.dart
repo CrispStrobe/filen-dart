@@ -1,6 +1,6 @@
 import 'package:test/test.dart';
-import 'package:filen_dart/cli.dart';
-import 'package:filen_dart/filen_client.dart';
+import 'package:filen_client/cli.dart';
+import 'package:filen_client/filen_client.dart';
 
 void main() {
   group('FilenClient facade', () {

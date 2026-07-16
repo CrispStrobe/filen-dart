@@ -12,8 +12,8 @@ import 'package:path/path.dart' as p;
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_dav/shelf_dav.dart';
 
-import 'package:filen_dart/filen_client.dart';
-import 'package:filen_dart/webdav_filesystem.dart';
+import 'package:filen_client/filen_client.dart';
+import 'package:filen_client/webdav_filesystem.dart';
 
 class FilenCLI {
   final ConfigService config;

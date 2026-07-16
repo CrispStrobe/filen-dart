@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:test/test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:filen_dart/api.dart';
+import 'package:filen_client/api.dart';
 
 void main() {
   group('FilenApi', () {

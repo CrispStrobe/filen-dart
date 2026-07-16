@@ -1,7 +1,7 @@
 @Tags(['live'])
 import 'package:test/test.dart';
-import 'package:filen_dart/filen_client.dart';
-import 'package:filen_dart/webdav_filesystem.dart';
+import 'package:filen_client/filen_client.dart';
+import 'package:filen_client/webdav_filesystem.dart';
 
 import 'live_support.dart';
 

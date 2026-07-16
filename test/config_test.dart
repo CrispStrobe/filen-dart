@@ -2,8 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:test/test.dart';
-import 'package:filen_dart/config.dart';
-import 'package:filen_dart/config_storage.dart';
+import 'package:filen_client/config.dart';
+import 'package:filen_client/config_storage.dart';
 
 void main() {
   late ConfigService config;

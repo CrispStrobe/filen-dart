@@ -5,10 +5,10 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
-import 'package:filen_dart/api.dart';
-import 'package:filen_dart/cache.dart';
-import 'package:filen_dart/crypto.dart';
-import 'package:filen_dart/utils.dart';
+import 'package:filen_client/api.dart';
+import 'package:filen_client/cache.dart';
+import 'package:filen_client/crypto.dart';
+import 'package:filen_client/utils.dart';
 
 class FilenDrive {
   final FilenApi api;

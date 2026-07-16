@@ -8,29 +8,29 @@ import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
-import 'package:filen_dart/api.dart';
-import 'package:filen_dart/auth.dart';
-import 'package:filen_dart/cache.dart';
-import 'package:filen_dart/config.dart';
-import 'package:filen_dart/crypto.dart';
-import 'package:filen_dart/download.dart';
-import 'package:filen_dart/drive.dart';
-import 'package:filen_dart/memory_gate.dart';
-import 'package:filen_dart/upload.dart';
-import 'package:filen_dart/utils.dart' as utils_lib;
+import 'package:filen_client/api.dart';
+import 'package:filen_client/auth.dart';
+import 'package:filen_client/cache.dart';
+import 'package:filen_client/config.dart';
+import 'package:filen_client/crypto.dart';
+import 'package:filen_client/download.dart';
+import 'package:filen_client/drive.dart';
+import 'package:filen_client/memory_gate.dart';
+import 'package:filen_client/upload.dart';
+import 'package:filen_client/utils.dart' as utils_lib;
 
-export 'package:filen_dart/api.dart';
-export 'package:filen_dart/auth.dart';
-export 'package:filen_dart/cache.dart';
-export 'package:filen_dart/config.dart';
-export 'package:filen_dart/config_storage.dart';
-export 'package:filen_dart/crypto.dart';
-export 'package:filen_dart/download.dart';
-export 'package:filen_dart/drive.dart';
-export 'package:filen_dart/upload.dart';
-export 'package:filen_dart/utils.dart';
-export 'package:filen_dart/memory_gate.dart';
-export 'package:filen_dart/paths.dart';
+export 'package:filen_client/api.dart';
+export 'package:filen_client/auth.dart';
+export 'package:filen_client/cache.dart';
+export 'package:filen_client/config.dart';
+export 'package:filen_client/config_storage.dart';
+export 'package:filen_client/crypto.dart';
+export 'package:filen_client/download.dart';
+export 'package:filen_client/drive.dart';
+export 'package:filen_client/upload.dart';
+export 'package:filen_client/utils.dart';
+export 'package:filen_client/memory_gate.dart';
+export 'package:filen_client/paths.dart';
 
 class FilenClient {
   static const apiUrl = 'https://gateway.filen.io';

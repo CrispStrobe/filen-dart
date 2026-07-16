@@ -1,6 +1,6 @@
 import 'package:test/test.dart';
 import 'package:crypto/crypto.dart' as crypto;
-import 'package:filen_dart/utils.dart';
+import 'package:filen_client/utils.dart';
 
 void main() {
   group('formatSize', () {

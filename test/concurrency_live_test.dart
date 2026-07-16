@@ -24,7 +24,7 @@ import 'package:crypto/crypto.dart' as crypto_pkg;
 import 'package:hex/hex.dart';
 import 'package:path/path.dart' as p;
 
-import 'package:filen_dart/filen_client.dart';
+import 'package:filen_client/filen_client.dart';
 
 import 'live_support.dart';
 

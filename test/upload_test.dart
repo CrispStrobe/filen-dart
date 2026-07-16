@@ -6,11 +6,11 @@ import 'dart:typed_data';
 import 'package:test/test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:filen_dart/api.dart';
-import 'package:filen_dart/cache.dart';
-import 'package:filen_dart/crypto.dart';
-import 'package:filen_dart/drive.dart';
-import 'package:filen_dart/upload.dart';
+import 'package:filen_client/api.dart';
+import 'package:filen_client/cache.dart';
+import 'package:filen_client/crypto.dart';
+import 'package:filen_client/drive.dart';
+import 'package:filen_client/upload.dart';
 
 void main() {
   late FilenApi api;

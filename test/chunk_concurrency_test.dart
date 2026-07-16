@@ -23,13 +23,13 @@ import 'package:http/testing.dart';
 import 'package:crypto/crypto.dart' as crypto_pkg;
 import 'package:hex/hex.dart';
 
-import 'package:filen_dart/api.dart';
-import 'package:filen_dart/cache.dart';
-import 'package:filen_dart/crypto.dart';
-import 'package:filen_dart/drive.dart';
-import 'package:filen_dart/download.dart';
-import 'package:filen_dart/memory_gate.dart';
-import 'package:filen_dart/upload.dart';
+import 'package:filen_client/api.dart';
+import 'package:filen_client/cache.dart';
+import 'package:filen_client/crypto.dart';
+import 'package:filen_client/drive.dart';
+import 'package:filen_client/download.dart';
+import 'package:filen_client/memory_gate.dart';
+import 'package:filen_client/upload.dart';
 
 const int mb = 1048576;
 

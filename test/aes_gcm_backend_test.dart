@@ -9,10 +9,10 @@ import 'dart:typed_data';
 
 import 'package:test/test.dart';
 
-import 'package:filen_dart/aes_gcm_backend.dart';
-import 'package:filen_dart/crypto.dart';
-import 'package:filen_dart/openssl_aesgcm.dart';
-import 'package:filen_dart/bcrypt_aesgcm.dart';
+import 'package:filen_client/aes_gcm_backend.dart';
+import 'package:filen_client/crypto.dart';
+import 'package:filen_client/openssl_aesgcm.dart';
+import 'package:filen_client/bcrypt_aesgcm.dart';
 
 void main() {
   final key = Uint8List(32)
