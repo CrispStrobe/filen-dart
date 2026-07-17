@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.1 — Web compatibility fix
+
+### Fixed
+- **Web builds no longer pull in `dart:ffi`.** `aes_gcm_backend.dart` imported
+  the OpenSSL and Windows-CNG FFI backends unconditionally, so any web
+  (dart2js/dartdevc) consumer failed to compile with *"Dart library 'dart:ffi'
+  is not available on this platform"*. The FFI backends are now selected via a
+  conditional import (`if (dart.library.ffi)`) with web-safe stubs; on web the
+  chooser falls through to the WebCrypto-backed `CryptographyBackend`. No API or
+  behavior change on native platforms.
+
 ## 0.2.0 — Bounded chunk + file-level concurrency
 
 Chunk and file transfers now run with **bounded concurrency** instead of

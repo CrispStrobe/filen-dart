@@ -23,8 +23,12 @@ import 'package:cryptography/cryptography.dart' as cg;
 import 'package:pointycastle/export.dart'
     show GCMBlockCipher, AESEngine, AEADParameters, KeyParameter;
 
-import 'bcrypt_aesgcm.dart';
-import 'openssl_aesgcm.dart';
+// FFI backends only exist on native platforms — the real files import
+// `dart:ffi`/`dart:io`, which dart2js can't compile. On web the conditional
+// import resolves to the stubs (tryLoad() -> null), so the chooser falls
+// through to the WebCrypto-backed CryptographyBackend.
+import 'bcrypt_aesgcm_stub.dart' if (dart.library.ffi) 'bcrypt_aesgcm.dart';
+import 'openssl_aesgcm_stub.dart' if (dart.library.ffi) 'openssl_aesgcm.dart';
 
 abstract class AesGcmBackend {
   String get name;
