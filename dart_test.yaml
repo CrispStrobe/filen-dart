@@ -1,3 +1,11 @@
+# Registers the `live` tag so `--tags live` / `--exclude-tags=live` work.
+#
+# Deliberately no blanket `skip:` here. It used to carry one, which meant
+# `dart test --tags live` reported "All tests skipped" — indistinguishable
+# from success — unless you also passed `--run-skipped`. Every live suite
+# (live_smoke, concurrency_live, webdav_live) already calls
+# `liveCredentialsAvailable()` and skips itself with a precise reason when
+# FILEN_EMAIL/FILEN_PASSWORD are absent and no saved CLI session exists,
+# so the tag-level skip added nothing but a foot-gun.
 tags:
   live:
-    skip: "Live tests require FILEN_EMAIL and FILEN_PASSWORD env vars. Run with: dart test --tags live"
