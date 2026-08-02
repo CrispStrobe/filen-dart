@@ -40,7 +40,8 @@ class FilenAuth {
       'email': email.toLowerCase(),
       'password': derivedPassword,
       'authVersion': authVersion,
-      'twoFactorCode': twoFactorCode,
+      // The API rejects an empty value when 2FA is disabled.
+      'twoFactorCode': twoFactorCode.trim().isEmpty ? 'XXXXXX' : twoFactorCode,
     };
 
     final response = await api.makeRequest(

@@ -161,6 +161,7 @@ void main() {
           await crypto.encryptMetadata002('plain-master-key', localMasterKey);
 
       String? loginEmail;
+      String? loginTwoFactorCode;
       final mockClient = MockClient((request) async {
         if (request.url.path == '/v3/auth/info') {
           return http.Response(
@@ -172,6 +173,8 @@ void main() {
         }
         if (request.url.path == '/v3/login') {
           loginEmail = (json.decode(request.body) as Map)['email'] as String?;
+          loginTwoFactorCode =
+              (json.decode(request.body) as Map)['twoFactorCode'] as String?;
           return http.Response(
               json.encode({
                 'status': true,
@@ -197,6 +200,7 @@ void main() {
       expect(creds['userId'], equals('42'));
       // Email is lowercased in the outgoing login payload.
       expect(loginEmail, equals('test@example.com'));
+      expect(loginTwoFactorCode, equals('XXXXXX'));
     });
 
     test('login falls back to the local master key when decryption fails',

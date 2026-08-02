@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.2 — 2FA placeholder fix
+
+### Fixed
+- **Login no longer fails for accounts without 2FA when the caller passes an
+  empty `twoFactorCode`.** The Filen API skips 2FA only when the placeholder
+  `"XXXXXX"` is sent; an empty string is rejected. `FilenAuth.login` already
+  *defaulted* to the placeholder, but a caller that explicitly passed `""`
+  (rather than omitting the argument) overrode that default and hit the
+  rejection. Empty/whitespace-only codes are now normalized to `"XXXXXX"`.
+  Callers that pass a real code are unaffected.
+
 ## 0.2.1 — Web compatibility fix
 
 ### Fixed
