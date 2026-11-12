@@ -844,3 +844,5 @@ This is an **unofficial** tool and is **not affiliated** with Filen.io.
 - Verify important uploads using the `verify` command
 - WebDAV server is experimental - use with caution
 - We assume no liability for data loss or corruption
+
+Dart/Rust interoperability checks and reproduction commands: [provider conformance](docs/PROVIDER_CONFORMANCE.md).

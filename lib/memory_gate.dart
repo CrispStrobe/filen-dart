@@ -95,7 +95,7 @@ class MemoryGate {
       if (Platform.isLinux) {
         return _getLinuxAvailableMemory();
       } else if (Platform.isMacOS) {
-        return _getMacOSAvailableMemory();
+        return await _getMacOSAvailableMemory();
       }
     } catch (_) {}
     return null;

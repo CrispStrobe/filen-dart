@@ -6,9 +6,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, "feature/**"]
   pull_request:
-    branches: [main]
+    branches: [main, "feature/**"]
   workflow_dispatch:
 
 jobs:
@@ -73,7 +73,7 @@ jobs:
           sdk: stable
       - run: dart pub get
       - name: Native FFI AES-GCM tests (Windows -> BCrypt, macOS -> OpenSSL)
-        run: dart test test/aes_gcm_backend_test.dart
+        run: dart test test/aes_gcm_backend_test.dart test/aes_key_validation_test.dart
 
   compile:
     name: Compile binary smoke check
